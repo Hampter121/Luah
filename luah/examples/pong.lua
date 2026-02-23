@@ -1,6 +1,3 @@
--- LuaForge Example: Simple Pong Game
--- Uses graphix for rendering and keyboard input
-
 local win = graphix.newWindow(600, 400, "Pong - LuaForge")
 win:setBackground(10, 10, 20)
 
