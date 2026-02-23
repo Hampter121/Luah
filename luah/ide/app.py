@@ -1,12 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import threading
 import time as _time
 import re
 import os
 
-from ide.highlighter import LuaHighlighter
-from ide.autocomplete import LuahAutocomplete
 from runtime.executor import LuaForgeRuntime
 
 yuricolors = {
@@ -26,13 +23,26 @@ yuricolors = {
     "toolbar":     "#0a0c10",
 }
 
-yurifontmono  = ("JetBrains Mono", 12)
-yurifontmonos = ("JetBrains Mono", 10)
-yurifontui    = ("Segoe UI", 10)
+def _yuripick_font(yuricandidates, yurisize):
+    try:
+        import tkinter.font as _tkfont
+        import tkinter as _tk2
+        _tk2.Tk().destroy()
+        yuriavail = set(_tkfont.families())
+        for yuriname in yuricandidates:
+            if yuriname in yuriavail:
+                return (yuriname, yurisize)
+    except Exception:
+        pass
+    return (yuricandidates[-1], yurisize)
+
+yurifontmono  = _yuripick_font(["JetBrains Mono","Cascadia Code","Fira Code","Consolas","Courier New","Courier"], 12)
+yurifontmonos = _yuripick_font(["JetBrains Mono","Cascadia Code","Fira Code","Consolas","Courier New","Courier"], 10)
+yurifontui    = _yuripick_font(["Segoe UI","SF Pro Text","Ubuntu","Helvetica","TkDefaultFont"], 10)
 
 yurisnippets = {
 
-
+    # -- BASICS --
     "Hello World": """\
 print("Hello from Luah!")
 print("Lua version: " .. _VERSION)
@@ -177,6 +187,7 @@ for i = 1, 6 do
 end
 """,
 
+    # -- GRAPHIX --
     "graphix window": """\
 local win = graphix.newWindow(400, 300, "My Window")
 win:setBackground(20, 20, 40)
@@ -384,7 +395,7 @@ end)
 win:run(60)
 """,
 
-
+    # -- FILESYSTEM --
     "fs write & read": """\
 fs.write("hello.txt", "Hello from Luah!\\nLine 2\\nLine 3")
 print("Written!")
@@ -430,7 +441,7 @@ print("Ext:  " .. info.ext)
 print("Abspath: " .. fs.abspath("hello.txt"))
 """,
 
-
+    # -- JSON --
     "json encode": """\
 local data = {
     name    = "Alice",
@@ -475,7 +486,7 @@ end
 fs.delete("data.json")
 """,
 
-  
+    # -- XML --
     "xml parse": """\
 local xmlstr = [[
 <library>
@@ -509,7 +520,7 @@ print("Original: " .. dangerous)
 print("Encoded:  " .. safe)
 """,
 
-
+    # -- NETWORKING --
     "net GET request": """\
 print("Fetching public API...")
 local resp = net.get("https://httpbin.org/get")
@@ -556,7 +567,7 @@ local decoded = net.urldecode("hello%20world%21")
 print("Decoded: " .. decoded)
 """,
 
-
+    # -- TCP --
     "tcp connect": """\
 print("Connecting to example server...")
 local ok, err = pcall(function()
@@ -590,7 +601,7 @@ end
 server:close()
 """,
 
-
+    # -- WEBSOCKETS --
     "ws connect": """\
 print("Connecting to WebSocket echo server...")
 local conn = ws.connect("wss://echo.websocket.events")
@@ -614,7 +625,7 @@ else
 end
 """,
 
-
+    # -- CONCURRENCY --
     "concurrent threads": """\
 print("Spawning threads...")
 
@@ -698,7 +709,7 @@ local ok, result = worker:join(5)
 print("Result: " .. result)
 """,
 
-
+    # -- CLI --
     "cli exec": """\
 local result = cli.exec("echo Hello from shell!")
 print("stdout: " .. result.stdout)
@@ -733,7 +744,7 @@ for i, v in ipairs(args) do
 end
 """,
 
-
+    # -- DATABASE --
     "db in-memory": """\
 local conn = db.sqlite()
 
@@ -807,7 +818,7 @@ end
 conn:close()
 """,
 
-
+    # -- COMBINED --
     "fetch & save JSON": """\
 print("Fetching data from API...")
 local resp = net.get("https://httpbin.org/uuid")
@@ -904,16 +915,17 @@ class LuahApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Luah IDE")
-        self.root.geometry("1280x800")
+        self.root.geometry("1380x860")
         self.root.configure(bg=yuricolors["bg"])
         self._yuriconfigure_styles()
 
-        self._yuriruntime  = None
-        self._yurifilepath = None
+        self._yuriruntime    = None
+        self._yuriterminal   = None
+        self._yuritabbar     = None
+        self._yurishowterm   = tk.BooleanVar(value=False)
 
         self._yuribuild_ui()
         self._yuribind_keys()
-        self._yuriload_default()
 
     def run(self):
         self.root.protocol("WM_DELETE_WINDOW", self._yuriclose)
@@ -922,6 +934,8 @@ class LuahApp:
     def _yuriclose(self):
         if self._yuriruntime:
             self._yuriruntime.stop()
+        if self._yuriterminal:
+            self._yuriterminal.destroy()
         self.root.destroy()
 
     def _yuriconfigure_styles(self):
@@ -929,9 +943,7 @@ class LuahApp:
         yuristyle.theme_use("clam")
         yuristyle.configure("TFrame",         background=yuricolors["bg"])
         yuristyle.configure("Surface.TFrame", background=yuricolors["surface"])
-        yuristyle.configure("Toolbar.TFrame", background=yuricolors["toolbar"])
-        yuristyle.configure("TLabel",         background=yuricolors["bg"],  foreground=yuricolors["text"],  font=yurifontui)
-        yuristyle.configure("Muted.TLabel",   background=yuricolors["bg"],  foreground=yuricolors["muted"], font=yurifontmonos)
+        yuristyle.configure("TLabel",         background=yuricolors["bg"], foreground=yuricolors["text"], font=yurifontui)
         yuristyle.configure("TButton",        background=yuricolors["surface2"], foreground=yuricolors["text"],
                             relief="flat", borderwidth=0, font=yurifontui, padding=(12, 6))
         yuristyle.map("TButton",
@@ -941,9 +953,11 @@ class LuahApp:
                             troughcolor=yuricolors["bg"], borderwidth=0, arrowsize=12)
         yuristyle.configure("Horizontal.TScrollbar", background=yuricolors["surface2"],
                             troughcolor=yuricolors["bg"], borderwidth=0, arrowsize=12)
+        yuristyle.configure("TPanedwindow", background=yuricolors["border"])
 
     def _yuribuild_ui(self):
         self._yuribuild_toolbar()
+        self._yuribuild_statusbar()
 
         yurimainpane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         yurimainpane.pack(fill=tk.BOTH, expand=True)
@@ -951,16 +965,41 @@ class LuahApp:
         yurisidebar = self._yuribuild_sidebar(yurimainpane)
         yurimainpane.add(yurisidebar, weight=0)
 
-        yuririgtpane = ttk.PanedWindow(yurimainpane, orient=tk.VERTICAL)
-        yurimainpane.add(yuririgtpane, weight=1)
+        yuriright = tk.Frame(yurimainpane, bg=yuricolors["bg"])
+        yurimainpane.add(yuriright, weight=1)
 
-        yurieditframe = self._yuribuild_editor(yuririgtpane)
-        yuririgtpane.add(yurieditframe, weight=3)
+        yurivertpane = ttk.PanedWindow(yuriright, orient=tk.VERTICAL)
+        yurivertpane.pack(fill=tk.BOTH, expand=True)
 
-        yuriconsframe = self._yuribuild_console(yuririgtpane)
-        yuririgtpane.add(yuriconsframe, weight=1)
+        yurieditorarea = tk.Frame(yurivertpane, bg=yuricolors["bg"])
+        yurivertpane.add(yurieditorarea, weight=3)
 
-        self._yuribuild_statusbar()
+        self._yuribottompane = ttk.PanedWindow(yurivertpane, orient=tk.HORIZONTAL)
+        yurivertpane.add(self._yuribottompane, weight=1)
+
+        yuriconsframe = self._yuribuild_console(self._yuribottompane)
+        self._yuribottompane.add(yuriconsframe, weight=1)
+
+        self._yuritermframe = tk.Frame(self._yuribottompane, bg=yuricolors["surface"])
+
+        from ide.tabs import LuahTabBar
+        self._yuritabbar = LuahTabBar(
+            yurieditorarea,
+            yuricolors, yurifontmono, yurifontmonos, yurifontui,
+            self._yurionactivetab,
+            self._yuriontabclosed,
+        )
+
+        yuridefault = (
+            "-- Welcome to Luah!\n"
+            "-- Press F5 to run  |  Ctrl+T = new tab  |  Ctrl+` = toggle terminal\n"
+            "\n"
+            'print("Hello from Luah!")\n'
+            'print("Lua version: " .. _VERSION)\n'
+            'print("Libraries: fs, json, xml, net, ws, tcp, concurrent, cli, db")\n'
+            'print("Time: " .. string.format("%.3f", time.now()))\n'
+        )
+        self._yuritabbar.new_tab(yuricode=yuridefault)
 
     def _yuribuild_toolbar(self):
         yuritb = tk.Frame(self.root, bg=yuricolors["toolbar"], height=48)
@@ -970,13 +1009,21 @@ class LuahApp:
         tk.Label(yuritb, text="⬡ Luah", bg=yuricolors["toolbar"],
                  fg=yuricolors["accent"], font=("Segoe UI", 13, "bold")).pack(side=tk.LEFT, padx=(14, 4))
 
-        tk.Label(yuritb, text="Lua 5.1 + Modified", bg=yuricolors["surface"],
+        tk.Label(yuritb, text="Lua 5.4+", bg=yuricolors["surface"],
                  fg=yuricolors["muted"], font=yurifontmonos, padx=8, pady=2).pack(side=tk.LEFT, padx=6)
 
-        tk.Button(yuritb, text="New",     command=self._yurinew_file,    **self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
-        tk.Button(yuritb, text="Open",    command=self._yuriopen_file,   **self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
-        tk.Button(yuritb, text="Save",    command=self._yurisave_file,   **self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
-        tk.Button(yuritb, text="Save As", command=self._yurisave_file_as,**self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
+        tk.Button(yuritb, text="＋ Tab",   command=self._yurinew_tab,     **self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
+        tk.Button(yuritb, text="Open",     command=self._yuriopen_file,   **self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
+        tk.Button(yuritb, text="Save",     command=self._yurisave_file,   **self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
+        tk.Button(yuritb, text="Save As",  command=self._yurisave_file_as,**self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)
+
+        self._yuritermtoggle = tk.Button(
+            yuritb, text="⬛ Terminal", command=self._yuritoggle_terminal,
+            bg=yuricolors["surface2"], fg=yuricolors["muted"],
+            font=yurifontui, relief="flat", padx=10, pady=5, cursor="hand2",
+            activebackground=yuricolors["border"],
+        )
+        self._yuritermtoggle.pack(side=tk.LEFT, padx=2, pady=8)
 
         self._yuristopbtn = tk.Button(yuritb, text="■  Stop", command=self._yuristop_script,
                                       bg=yuricolors["red"], fg="#ffffff",
@@ -991,7 +1038,7 @@ class LuahApp:
                                      relief="flat", padx=14, pady=6, cursor="hand2")
         self._yurirunbtn.pack(side=tk.RIGHT, padx=4, pady=8)
 
-        tk.Button(yuritb, text="Clear Console", command=self._yuriclear_console,
+        tk.Button(yuritb, text="Clear", command=self._yuriclear_console,
                   **self._yuribtn()).pack(side=tk.RIGHT, padx=4, pady=8)
 
     def _yuribtn(self):
@@ -1000,167 +1047,45 @@ class LuahApp:
                     activebackground=yuricolors["border"], activeforeground=yuricolors["text"])
 
     def _yuribuild_sidebar(self, yuriparent):
-        yuriframe = tk.Frame(yuriparent, bg=yuricolors["surface"], width=200)
+        yuriframe = tk.Frame(yuriparent, bg=yuricolors["surface"], width=210)
         yuriframe.pack_propagate(False)
 
         tk.Label(yuriframe, text="SNIPPETS", bg=yuricolors["surface"],
                  fg=yuricolors["muted"], font=("Segoe UI", 8, "bold")).pack(padx=10, pady=(10, 4), anchor="w")
-
         tk.Frame(yuriframe, bg=yuricolors["border"], height=1).pack(fill=tk.X, padx=10)
 
-        yuricanvas = tk.Canvas(yuriframe, bg=yuricolors["surface"],
-                               highlightthickness=0, bd=0)
+        yuricanvas = tk.Canvas(yuriframe, bg=yuricolors["surface"], highlightthickness=0, bd=0)
         yurisb2 = ttk.Scrollbar(yuriframe, orient=tk.VERTICAL, command=yuricanvas.yview)
         yurisb2.pack(side=tk.RIGHT, fill=tk.Y)
         yuricanvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         yuricanvas.configure(yscrollcommand=yurisb2.set)
 
         yurisf = tk.Frame(yuricanvas, bg=yuricolors["surface"])
-        yuricanvas_win = yuricanvas.create_window((0, 0), window=yurisf, anchor="nw")
+        yuricanvaswin = yuricanvas.create_window((0, 0), window=yurisf, anchor="nw")
 
-        def yurionfr(yurie):
-            yuricanvas.configure(scrollregion=yuricanvas.bbox("all"))
-            yuricanvas.itemconfig(yuricanvas_win, width=yuricanvas.winfo_width())
-        yurisf.bind("<Configure>", yurionfr)
-        yuricanvas.bind("<Configure>", lambda yurie: yuricanvas.itemconfig(
-            yuricanvas_win, width=yurie.width))
+        yurisf.bind("<Configure>", lambda yurie: (
+            yuricanvas.configure(scrollregion=yuricanvas.bbox("all")),
+            yuricanvas.itemconfig(yuricanvaswin, width=yuricanvas.winfo_width()),
+        ))
+        yuricanvas.bind("<Configure>", lambda yurie: yuricanvas.itemconfig(yuricanvaswin, width=yurie.width))
 
         def yuriwheel(yurie):
-            yuricanvas.yview_scroll(int(-1*(yurie.delta/120)), "units")
-        yuricanvas.bind_all("<MouseWheel>", yuriwheel)
+            yuricanvas.yview_scroll(int(-1 * (yurie.delta / 120)), "units")
+
+        yuricanvas.bind("<MouseWheel>", yuriwheel)
+        yurisf.bind("<MouseWheel>", yuriwheel)
 
         for yurisnipname in yurisnippets:
-            tk.Button(
+            yuribtn = tk.Button(
                 yurisf, text=yurisnipname, anchor="w",
                 command=lambda yurin=yurisnipname: self._yuriinsert_snippet(yurin),
                 bg=yuricolors["surface2"], fg=yuricolors["accent2"],
                 font=yurifontmonos, relief="flat",
                 padx=8, pady=4, cursor="hand2",
                 activebackground=yuricolors["border"], activeforeground=yuricolors["text"]
-            ).pack(fill=tk.X, pady=1, padx=4)
-
-        tk.Frame(yuriframe, bg=yuricolors["border"], height=1).pack(fill=tk.X, padx=10, pady=(4, 0))
-        tk.Label(yuriframe, text="GRAPHIX API", bg=yuricolors["surface"],
-                 fg=yuricolors["muted"], font=("Segoe UI", 8, "bold")).pack(padx=10, pady=(8, 4), anchor="w")
-
-        yuriapitxt = (
-            "── graphix ──────────────\n"
-            "graphix.newWindow(w,h,t)\n"
-            "win:fillRect / drawRect\n"
-            "win:fillCircle / drawCircle\n"
-            "win:drawLine / drawText\n"
-            "win:isKeyDown / getMousePos\n"
-            "win:onUpdate(fn) onDraw(fn)\n"
-            "win:run(fps)  win:close()\n"
-            "── fs ───────────────────\n"
-            "fs.read(path)\n"
-            "fs.write(path, content)\n"
-            "fs.exists / isFile / isDir\n"
-            "fs.list / glob / mkdir\n"
-            "fs.copy / move / delete\n"
-            "fs.join / cwd / chdir\n"
-            "── json / xml ───────────\n"
-            "json.encode / decode\n"
-            "json.pretty(value)\n"
-            "xml.parse / parseFile\n"
-            "xml.findAll(text, path)\n"
-            "── net ──────────────────\n"
-            "net.get(url)\n"
-            "net.post(url, body)\n"
-            "net.put / delete\n"
-            "net.download(url, dest)\n"
-            "── ws / tcp ─────────────\n"
-            "ws.connect(url)\n"
-            "tcp.connect(host, port)\n"
-            "tcp.listen(port)\n"
-            "── concurrent ───────────\n"
-            "concurrent.thread(fn)\n"
-            "concurrent.channel()\n"
-            "concurrent.mutex()\n"
-            "concurrent.event()\n"
-            "── cli ──────────────────\n"
-            "cli.exec(cmd)\n"
-            "cli.args() / getEnv()\n"
-            "cli.color(text, color)\n"
-            "cli.input(prompt)\n"
-            "── db ───────────────────\n"
-            "db.sqlite() / sqlite(path)\n"
-            "conn:exec(sql)\n"
-            "conn:query(sql)\n"
-            "conn:queryOne(sql)\n"
-            "conn:begin/commit/rollback\n"
-            "── misc ─────────────────\n"
-            "wait(seconds)\n"
-            "time.now() / clock()\n"
-            "math.clamp/lerp/sign/round"
-        )
-
-        tk.Label(yuriframe, text=yuriapitxt, bg=yuricolors["surface"],
-                 fg=yuricolors["muted"], font=("Courier", 8),
-                 justify="left", anchor="nw").pack(padx=10, pady=(0, 10), anchor="nw")
-
-        return yuriframe
-
-    def _yuribuild_editor(self, yuriparent):
-        yuriframe = tk.Frame(yuriparent, bg=yuricolors["bg"])
-
-        yuritabbar = tk.Frame(yuriframe, bg=yuricolors["surface"], height=32)
-        yuritabbar.pack(fill=tk.X)
-        yuritabbar.pack_propagate(False)
-
-        self._yuritablabel = tk.Label(
-            yuritabbar, text="  main.lua  ",
-            bg=yuricolors["bg"], fg=yuricolors["text"],
-            font=yurifontmonos, padx=4, pady=6
-        )
-        self._yuritablabel.pack(side=tk.LEFT, padx=(8, 0))
-        tk.Label(yuritabbar, bg=yuricolors["surface"]).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        yuriedrow = tk.Frame(yuriframe, bg=yuricolors["bg"])
-        yuriedrow.pack(fill=tk.BOTH, expand=True)
-
-        self._yurilinenumswidget = tk.Text(
-            yuriedrow,
-            width=4, state=tk.DISABLED,
-            bg=yuricolors["surface"], fg=yuricolors["muted"],
-            font=yurifontmono, relief="flat",
-            padx=8, pady=14,
-            cursor="arrow", selectbackground=yuricolors["surface"],
-        )
-        self._yurilinenumswidget.pack(side=tk.LEFT, fill=tk.Y)
-        tk.Frame(yuriedrow, bg=yuricolors["border"], width=1).pack(side=tk.LEFT, fill=tk.Y)
-
-        self._yurieditor = tk.Text(
-            yuriedrow,
-            bg=yuricolors["bg"], fg=yuricolors["text"],
-            insertbackground=yuricolors["accent"],
-            font=yurifontmono,
-            relief="flat", padx=14, pady=14,
-            undo=True,
-            selectbackground="#2a3050",
-            selectforeground=yuricolors["text"],
-            wrap=tk.NONE,
-            tabs=("    "),
-        )
-        self._yurieditor.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        yurivscroll = ttk.Scrollbar(yuriedrow, orient=tk.VERTICAL,
-                                    command=self._yurisync_scroll_v)
-        yurivscroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self._yurieditor.config(yscrollcommand=lambda *yuria: self._yurioneditor_vscroll(*yuria, yurisb=yurivscroll))
-
-        yurihscroll = ttk.Scrollbar(yuriframe, orient=tk.HORIZONTAL, command=self._yurieditor.xview)
-        yurihscroll.pack(fill=tk.X)
-        self._yurieditor.config(xscrollcommand=yurihscroll.set)
-
-        self._yurihighlighter = LuaHighlighter(self._yurieditor, yurifontname="Courier", yurifontsize=12)
-        self._yuriacomplete   = LuahAutocomplete(self.root, self._yurieditor, yuricolors, ("Courier", 11))
-
-        self._yurieditor.bind("<KeyRelease>",    self._yurioneditor_change)
-        self._yurieditor.bind("<ButtonRelease>", self._yurioneditor_change)
-        self._yurieditor.bind("<Return>",        self._yuriauto_indent)
-        self._yurieditor.bind("<Tab>",           self._yurihandle_tab)
-        self._yurieditor.bind("<BackSpace>",     self._yurihandle_backspace)
+            )
+            yuribtn.pack(fill=tk.X, pady=1, padx=4)
+            yuribtn.bind("<MouseWheel>", yuriwheel)
 
         return yuriframe
 
@@ -1174,7 +1099,7 @@ class LuahApp:
         self._yuriconsoledot = tk.Label(yuriheader, text="●", bg=yuricolors["surface"],
                                         fg=yuricolors["green"], font=("Segoe UI", 10))
         self._yuriconsoledot.pack(side=tk.LEFT, padx=(10, 4), pady=4)
-        tk.Label(yuriheader, text="CONSOLE OUTPUT", bg=yuricolors["surface"],
+        tk.Label(yuriheader, text="OUTPUT", bg=yuricolors["surface"],
                  fg=yuricolors["muted"], font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, pady=4)
 
         tk.Frame(yuriframe, bg=yuricolors["border"], height=1).pack(fill=tk.X)
@@ -1183,12 +1108,9 @@ class LuahApp:
         yuriconsrow.pack(fill=tk.BOTH, expand=True)
 
         self._yuriconsole = tk.Text(
-            yuriconsrow,
-            bg="#09090d", fg=yuricolors["text"],
-            font=("Courier", 11),
-            relief="flat", padx=10, pady=8,
-            state=tk.DISABLED,
-            wrap=tk.WORD,
+            yuriconsrow, bg="#09090d", fg=yuricolors["text"],
+            font=yurifontmonos, relief="flat", padx=10, pady=8,
+            state=tk.DISABLED, wrap=tk.WORD,
         )
         self._yuriconsole.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -1196,13 +1118,13 @@ class LuahApp:
         yuriconssb.pack(side=tk.RIGHT, fill=tk.Y)
         self._yuriconsole.config(yscrollcommand=yuriconssb.set)
 
-        self._yuriconsole.tag_config("normal",  foreground=yuricolors["text"])
-        self._yuriconsole.tag_config("error",   foreground=yuricolors["red"])
-        self._yuriconsole.tag_config("info",    foreground=yuricolors["accent2"])
-        self._yuriconsole.tag_config("success", foreground=yuricolors["green"])
-        self._yuriconsole.tag_config("warn",    foreground=yuricolors["accent"])
-        self._yuriconsole.tag_config("time",    foreground=yuricolors["muted"])
-        self._yuriconsole.tag_config("dim",     foreground=yuricolors["muted"])
+        for yuritag, yuriclr in [
+            ("normal", yuricolors["text"]), ("error", yuricolors["red"]),
+            ("info", yuricolors["accent2"]), ("success", yuricolors["green"]),
+            ("warn", yuricolors["accent"]), ("time", yuricolors["muted"]),
+            ("dim", yuricolors["muted"]),
+        ]:
+            self._yuriconsole.tag_config(yuritag, foreground=yuriclr)
 
         return yuriframe
 
@@ -1214,7 +1136,6 @@ class LuahApp:
         self._yuristatusdot = tk.Label(yurisb, text="●", bg=yuricolors["surface"],
                                        fg=yuricolors["green"], font=("Segoe UI", 8))
         self._yuristatusdot.pack(side=tk.LEFT, padx=(8, 2))
-
         self._yuristatustxt = tk.Label(yurisb, text="Ready", bg=yuricolors["surface"],
                                        fg=yuricolors["muted"], font=yurifontmonos)
         self._yuristatustxt.pack(side=tk.LEFT)
@@ -1223,138 +1144,81 @@ class LuahApp:
                                        fg=yuricolors["muted"], font=yurifontmonos)
         self._yuricursorpos.pack(side=tk.RIGHT, padx=10)
 
-        tk.Label(yurisb, text="Lua 5.1 + graphix 1.0 + wait()",
-                 bg=yuricolors["surface"], fg=yuricolors["muted"],
-                 font=yurifontmonos).pack(side=tk.RIGHT, padx=10)
+        self._yuritabnametxt = tk.Label(yurisb, text="untitled.luah", bg=yuricolors["surface"],
+                                        fg=yuricolors["muted"], font=yurifontmonos)
+        self._yuritabnametxt.pack(side=tk.RIGHT, padx=10)
+
+        tk.Label(yurisb, text="Lua 5.1+", bg=yuricolors["surface"],
+                 fg=yuricolors["muted"], font=yurifontmonos).pack(side=tk.RIGHT, padx=10)
 
     def _yuribind_keys(self):
-        self.root.bind("<F5>",            lambda yurie: self._yurirun_script())
-        self.root.bind("<F6>",            lambda yurie: self._yuristop_script())
-        self.root.bind("<Control-Return>",lambda yurie: self._yurirun_script())
-        self.root.bind("<Control-s>",     lambda yurie: self._yurisave_file())
-        self.root.bind("<Control-n>",     lambda yurie: self._yurinew_file())
-        self.root.bind("<Control-o>",     lambda yurie: self._yuriopen_file())
+        self.root.bind("<F5>",             lambda yurie: self._yurirun_script())
+        self.root.bind("<F6>",             lambda yurie: self._yuristop_script())
+        self.root.bind("<Control-Return>", lambda yurie: self._yurirun_script())
+        self.root.bind("<Control-s>",      lambda yurie: self._yurisave_file())
+        self.root.bind("<Control-t>",      lambda yurie: self._yurinew_tab())
+        self.root.bind("<Control-o>",      lambda yurie: self._yuriopen_file())
+        self.root.bind("<Control-grave>",  lambda yurie: self._yuritoggle_terminal())
 
-    def _yurioneditor_change(self, yurie=None):
-        self._yuriupdate_linenums()
-        self._yurihighlighter.schedule()
-        self._yuriupdate_cursorpos()
+    def _yurionactivetab(self, yurittab):
+        yuriname = os.path.basename(yurittab.yuripath) if yurittab.yuripath else "untitled.luah"
+        self._yuritabnametxt.config(text=yuriname)
+        self.root.title(f"Luah IDE — {yuriname}")
 
-    def _yuriauto_indent(self, yurie):
-        yurieditor = self._yurieditor
-        yuriline   = yurieditor.get("insert linestart", "insert lineend")
-        yuriindent = len(yuriline) - len(yuriline.lstrip())
-        yuristripped = yuriline.rstrip()
-        yurikeywords = ("function", "do", "then", "else", "repeat", "elseif")
-        if any(yuristripped.endswith(yurik) or yuristripped == yurik for yurik in yurikeywords) or \
-           re.search(r'\bdo\b|\bthen\b|\belse\b|\brepeat\b|\bfunction\b', yuristripped):
-            yuriindent += 4
-        yurieditor.insert("insert", "\n" + " " * yuriindent)
-        self._yurioneditor_change()
-        return "break"
+    def _yuriontabclosed(self, yurittab):
+        pass
 
-    def _yurihandle_tab(self, yurie):
-        if hasattr(self, "_yuriacomplete") and self._yuriacomplete._yuriactive:
-            return
-        self._yurieditor.insert("insert", "    ")
-        self._yurioneditor_change()
-        return "break"
+    def _yurinew_tab(self):
+        if self._yuritabbar:
+            self._yuritabbar.new_tab()
 
-    def _yurihandle_backspace(self, yurie):
-        yurieditor = self._yurieditor
-        yuriline   = yurieditor.get("insert linestart", "insert")
-        if yuriline and yuriline == " " * len(yuriline) and len(yuriline) % 4 == 0:
-            yurieditor.delete("insert-4c", "insert")
-            self._yurioneditor_change()
-            return "break"
+    def _yuriopen_file(self):
+        if self._yuritabbar:
+            self._yuritabbar.open_file()
 
-    def _yuriupdate_linenums(self):
-        yurieditor = self._yurieditor
-        yurilnw    = self._yurilinenumswidget
-        yuricount  = int(yurieditor.index("end-1c").split(".")[0])
-        yurilnw.config(state=tk.NORMAL)
-        yurilnw.delete("1.0", "end")
-        for yurii in range(1, yuricount + 1):
-            yurilnw.insert("end", f"{yurii}\n")
-        yurilnw.config(state=tk.DISABLED)
+    def _yurisave_file(self):
+        if self._yuritabbar:
+            yuriok = self._yuritabbar.save_tab()
+            if yuriok:
+                yurittab = self._yuritabbar.active_tab()
+                if yurittab and yurittab.yuripath:
+                    self._yurilog("Saved: " + yurittab.yuripath, "info")
 
-    def _yuriupdate_cursorpos(self, yurie=None):
-        yuriidx = self._yurieditor.index("insert")
-        yuriln, yuricol = yuriidx.split(".")
-        self._yuricursorpos.config(text=f"Ln {yuriln}, Col {int(yuricol)+1}")
-
-    def _yurioneditor_vscroll(self, *yuriargs, yurisb=None):
-        if yurisb:
-            yurisb.set(*yuriargs)
-        self._yurilinenumswidget.yview_moveto(yuriargs[0])
-
-    def _yurisync_scroll_v(self, *yuriargs):
-        self._yurieditor.yview(*yuriargs)
-        self._yurilinenumswidget.yview(*yuriargs)
+    def _yurisave_file_as(self):
+        if self._yuritabbar:
+            self._yuritabbar.save_tab_as()
 
     def _yuriinsert_snippet(self, yuriname: str):
         yuricode = yurisnippets.get(yuriname, "")
-        self._yurieditor.delete("1.0", "end")
-        self._yurieditor.insert("1.0", yuricode)
-        self._yurioneditor_change()
+        if self._yuritabbar:
+            self._yuritabbar.insert_snippet(yuricode)
 
-    def _yuriload_default(self):
-        yuridefault = (
-            "-- Welcome to Luah!\n"
-            "-- Press F5 or Run to execute\n"
-            "\n"
-            'print("Hello from Luah!")\n'
-            'print("Lua version: " .. _VERSION)\n'
-            'print("Time: " .. time.now())\n'
-            "\n"
-            "-- Try the snippets on the left!\n"
-        )
-        self._yurieditor.insert("1.0", yuridefault)
-        self._yurioneditor_change()
-
-    def _yurinew_file(self):
-        if messagebox.askyesno("New File", "Discard current code?"):
-            self._yurieditor.delete("1.0", "end")
-            self._yurifilepath = None
-            self._yuritablabel.config(text="  main.lua  ")
-            self._yurioneditor_change()
-
-    def _yuriopen_file(self):
-        yuripath = filedialog.askopenfilename(
-            filetypes=[("Lua files", "*.lua"), ("All files", "*.*")])
-        if yuripath:
-            with open(yuripath, "r", encoding="utf-8") as yurif:
-                yuricode = yurif.read()
-            self._yurieditor.delete("1.0", "end")
-            self._yurieditor.insert("1.0", yuricode)
-            self._yurifilepath = yuripath
-            self._yuritablabel.config(text=f"  {os.path.basename(yuripath)}  ")
-            self._yurioneditor_change()
-
-    def _yurisave_file(self):
-        if self._yurifilepath:
-            with open(self._yurifilepath, "w", encoding="utf-8") as yurif:
-                yurif.write(self._yurieditor.get("1.0", "end-1c"))
-            self._yurilog("Saved: " + self._yurifilepath, "info")
+    def _yuritoggle_terminal(self):
+        from ide.terminal import LuahTerminal
+        if self._yurishowterm.get():
+            self._yurishowterm.set(False)
+            self._yuritermframe.pack_forget()
+            self._yuribottompane.forget(self._yuritermframe)
+            self._yuritermtoggle.config(fg=yuricolors["muted"], bg=yuricolors["surface2"])
         else:
-            self._yurisave_file_as()
-
-    def _yurisave_file_as(self):
-        yuripath = filedialog.asksaveasfilename(
-            defaultextension=".lua",
-            filetypes=[("Lua files", "*.lua"), ("All files", "*.*")])
-        if yuripath:
-            self._yurifilepath = yuripath
-            self._yuritablabel.config(text=f"  {os.path.basename(yuripath)}  ")
-            self._yurisave_file()
+            self._yurishowterm.set(True)
+            if self._yuriterminal is None:
+                self._yuriterminal = LuahTerminal(
+                    self._yuritermframe, yuricolors, yurifontmono
+                )
+            self._yuribottompane.add(self._yuritermframe, weight=1)
+            self._yuritermtoggle.config(fg=yuricolors["bg"], bg=yuricolors["accent2"])
+            self._yuriterminal.focus_input()
 
     def _yurirun_script(self):
         if self._yuriruntime and self._yuriruntime.is_running():
             self._yurilog("Already running. Stop it first.", "warn")
             return
+        if not self._yuritabbar:
+            return
 
-        yuricode = self._yurieditor.get("1.0", "end-1c")
-        self._yurihighlighter.clear_error_line()
+        yuricode = self._yuritabbar.get_code()
+        self._yuritabbar.clear_error_line()
         self._yurilog("─" * 40, "dim")
         self._yurilog("Running script...", "info")
         self._yuriset_running(True)
@@ -1398,7 +1262,7 @@ class LuahApp:
         yurimatch = re.search(r':(\d+):', yurimsg)
         if yurimatch:
             yurilinenum = int(yurimatch.group(1))
-            self.root.after(0, lambda: self._yurihighlighter.mark_error_line(yurilinenum))
+            self.root.after(0, lambda: self._yuritabbar.mark_error_line(yurilinenum))
         self.root.after(0, lambda: self._yurilog(f"ERROR: {yurimsg}", "error"))
         self.root.after(0, lambda: self._yuriset_running(False))
 

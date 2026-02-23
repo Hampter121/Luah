@@ -23,10 +23,10 @@ def yuriinject_tcp(yurilua, yurig, yuristop):
         def yurirecvline(_s):
             yuribuf = b""
             while True:
-                yurич = yurisock.recv(1)
-                if not yurич or yurич == b"\n":
+                yuribyte = yurisock.recv(1)
+                if not yuribyte or yuribyte == b"\n":
                     break
-                yuribuf += yurич
+                yuribuf += yuribyte
             return yuribuf.decode("utf-8", errors="replace").rstrip("\r")
 
         def yurisendline(_s, yuridata):
@@ -75,10 +75,10 @@ def yuriinject_tcp(yurilua, yurig, yuristop):
             def yurirecvline2(_s2):
                 yuribuf = b""
                 while True:
-                    yurич = yuricsock.recv(1)
-                    if not yurич or yurич == b"\n":
+                    yuribyte = yuricsock.recv(1)
+                    if not yuribyte or yuribyte == b"\n":
                         break
-                    yuribuf += yurич
+                    yuribuf += yuribyte
                 return yuribuf.decode("utf-8", errors="replace").rstrip("\r")
 
             def yurisendline2(_s2, yuridata):

@@ -19,15 +19,29 @@ def yuriinject_net(yurilua, yurig):
 
     def yuriresponse_table(yuricode, yuribo, yurihdrs):
         yuritext = yuribo.decode("utf-8", errors="replace")
+
+        def yurijsonfn(_s):
+            try:
+                yuriparsed = _json.loads(yuritext)
+                if isinstance(yuriparsed, dict):
+                    return yurilua.table_from({
+                        yurik: yuriov for yurik, yuriov in yuriparsed.items()
+                    })
+                elif isinstance(yuriparsed, list):
+                    return yurilua.table_from({
+                        i + 1: yuriparsed[i] for i in range(len(yuriparsed))
+                    })
+                else:
+                    return yuriparsed
+            except Exception:
+                return None
+
         return yurilua.table_from({
             "status":  yuricode,
             "body":    yuritext,
             "headers": yurilua.table_from({str(yurik): str(yuriov) for yurik, yuriov in yurihdrs.items()}),
             "ok":      200 <= yuricode < 300,
-            "json": lambda _s: yurilua.table_from(
-                _json.loads(yuritext) if isinstance(_json.loads(yuritext), dict)
-                else {"_array": yuritext}
-            ),
+            "json":    yurijsonfn,
         })
 
     def yuriget(yuriurl, yuriheaderstbl=None):
