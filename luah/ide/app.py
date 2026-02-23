@@ -1301,7 +1301,6 @@ class LuahApp:
     def _yuriload_default(self):
         yuridefault = (
             "-- Welcome to Luah!\n"
-            "-- Modified Lua 5.1 with wait() and graphix\n"
             "-- Press F5 or Run to execute\n"
             "\n"
             'print("Hello from Luah!")\n'
