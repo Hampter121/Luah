@@ -1,6 +1,3 @@
--- LuaForge Example: Particle System
--- Click the mouse to spawn particles
-
 local win = graphix.newWindow(700, 500, "Particles - LuaForge")
 win:setBackground(5, 5, 15)
 
