@@ -15,12 +15,17 @@ yuritokenlist = [
                       r'rawequal|setmetatable|getmetatable|require|module|'
                       r'collectgarbage|dofile|load|loadfile|loadstring|'
                       r'coroutine|string|table|math|io|os|debug|'
-                      r'wait|time|graphix|fs|json|xml|net|ws|tcp|concurrent|cli|db)\b',         0),
+                      r'wait|time|graphix|fs|json|xml|net|ws|tcp|concurrent|cli|db|'
+                      r'sound|http|luah)\b',              0),
     ("graphix_method",r'\b(?:newWindow|drawRect|fillRect|drawCircle|fillCircle|'
                       r'drawLine|drawText|drawPixel|setBackground|fill|clear|'
                       r'present|isKeyDown|isKeyUp|getMousePos|isMouseDown|'
                       r'onUpdate|onDraw|run|close|isOpen|getWidth|getHeight|'
-                      r'setTitle|getDelta|getFPS)\b',  0),
+                      r'setTitle|getDelta|getFPS|fillRoundRect|drawRoundRect|'
+                      r'fillPolygon|drawPolygon|drawImage|loadImage|'
+                      r'getTextWidth|getTextHeight|setOpacity|resetOpacity|'
+                      r'getScroll|getScrollEvents|getTypedChars|getKeyEvents|'
+                      r'onKeyDown|onKeyUp|onMouseDown|onMouseUp|onScroll)\b', 0),
     ("operator",      r'[+\-*/%^#=<>&|~(){}[\],;:.]', 0),
     ("identifier",    r'\b[a-zA-Z_][a-zA-Z0-9_]*\b',  0),
 ]

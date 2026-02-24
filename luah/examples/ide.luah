@@ -1,0 +1,691 @@
+-- ide.luah
+-- A Luah IDE written in Luah.
+-- Multi-tab editor, file tree, console output, run/stop.
+
+local W, H = 1200, 750
+local win = graphix.newWindow(W, H, "Luah IDE (written in Luah)")
+
+-- ── palette ──────────────────────────────────────────────
+local C = {
+    bg       = {13,  15,  20},
+    surface  = {20,  24,  34},
+    surface2 = {26,  30,  44},
+    border   = {38,  44,  58},
+    text     = {248, 248, 242},
+    muted    = {98,  114, 164},
+    accent   = {232, 197, 71},
+    accent2  = {71,  197, 232},
+    green    = {80,  250, 123},
+    red      = {255, 85,  85},
+    orange   = {255, 184, 108},
+    purple   = {189, 147, 249},
+    linenum  = {68,  78,  120},
+    curline  = {18,  22,  32},
+    cursor   = {232, 197, 71},
+    keyword  = {189, 147, 249},
+    str_c    = {241, 250, 140},
+    comment  = {98,  114, 164},
+    number_c = {255, 184, 108},
+    builtin  = {80,  250, 200},
+    tabact   = {20,  24,  34},
+    tabinact = {15,  18,  26},
+}
+
+-- ── layout constants ─────────────────────────────────────
+local FS       = 12          -- font size
+local LH       = FS + 5      -- line height
+local CW       = 7           -- char width (monospace approx)
+local TOOLBAR  = 42
+local SIDEBAR  = 190
+local TABBAR   = 30
+local STATUS   = 22
+local CONSOLE  = 160
+
+local ED_X     = SIDEBAR
+local ED_Y     = TOOLBAR + TABBAR
+local ED_W     = W - SIDEBAR
+local ED_H     = H - TOOLBAR - TABBAR - STATUS - CONSOLE
+local VIS_ROWS = math.floor(ED_H / LH)
+local VIS_COLS = math.floor(ED_W / CW) - 4
+local LNUM_W   = 44
+local CON_Y    = H - STATUS - CONSOLE
+
+-- ── buffer structure ─────────────────────────────────────
+local function new_buf(name, code)
+    return {
+        name   = name,
+        path   = nil,
+        lines  = code and (function()
+            local t = {}
+            for ln in string.gmatch(code.."\n","([^\n]*)\n") do
+                table.insert(t, ln)
+            end
+            return #t > 0 and t or {""}
+        end)() or {""},
+        crow   = 1, ccol = 1,
+        stop   = 1, slft = 0,
+        dirty  = false,
+    }
+end
+
+-- ── tabs ─────────────────────────────────────────────────
+local tabs    = {
+    new_buf("welcome.luah",
+        '-- Welcome to Luah IDE (written in Luah!)\n'..
+        '-- Ctrl+N  new tab    Ctrl+O  open file\n'..
+        '-- Ctrl+S  save       Ctrl+W  close tab\n'..
+        '-- Ctrl+R  run        Ctrl+K  kill run\n'..
+        '-- F1      new tab    F2      file tree\n'..
+        '\nprint("Hello from Luah IDE!")\n'..
+        'print("Lua " .. _VERSION)\n'..
+        'print("Time: " .. string.format("%.3f", time.now()))\n'
+    )
+}
+local tabidx  = 1
+
+local function curtab() return tabs[tabidx] end
+local function curlines() return curtab().lines end
+local function curline() return curlines()[curtab().crow] or "" end
+local function linecount() return #curlines() end
+
+-- ── syntax ───────────────────────────────────────────────
+local KW = {["local"]=1,["function"]=1,["return"]=1,["if"]=1,["then"]=1,
+            ["else"]=1,["elseif"]=1,["end"]=1,["do"]=1,["while"]=1,
+            ["for"]=1,["repeat"]=1,["until"]=1,["in"]=1,["not"]=1,
+            ["and"]=1,["or"]=1,["true"]=1,["false"]=1,["nil"]=1,["break"]=1}
+local BI = {["print"]=1,["pairs"]=1,["ipairs"]=1,["type"]=1,["tostring"]=1,
+            ["tonumber"]=1,["math"]=1,["string"]=1,["table"]=1,["wait"]=1,
+            ["graphix"]=1,["fs"]=1,["json"]=1,["net"]=1,["db"]=1,["cli"]=1,
+            ["concurrent"]=1,["tcp"]=1,["ws"]=1,["xml"]=1,["time"]=1,
+            ["error"]=1,["pcall"]=1,["assert"]=1,["require"]=1,["os"]=1,
+            ["io"]=1,["coroutine"]=1,["select"]=1,["unpack"]=1}
+
+local function tokenize(line)
+    local out, i, len = {}, 1, #line
+    local ci = string.find(line, "--")
+    if ci then
+        if ci > 1 then for _,t in ipairs(tokenize(string.sub(line,1,ci-1))) do table.insert(out,t) end end
+        table.insert(out, {string.sub(line,ci), C.comment}); return out
+    end
+    while i <= len do
+        local ch = string.sub(line,i,i)
+        if ch=='"' or ch=="'" then
+            local j=i+1
+            while j<=len do
+                if string.sub(line,j,j)==ch and string.sub(line,j-1,j-1)~="\\" then break end
+                j=j+1
+            end
+            table.insert(out,{string.sub(line,i,j),C.str_c}); i=j+1
+        elseif string.match(ch,"%d") then
+            local j=i
+            while j<=len and string.match(string.sub(line,j,j),"[%d%.xXa-fA-F]") do j=j+1 end
+            table.insert(out,{string.sub(line,i,j-1),C.number_c}); i=j
+        elseif string.match(ch,"[%a_]") then
+            local j=i
+            while j<=len and string.match(string.sub(line,j,j),"[%w_]") do j=j+1 end
+            local w=string.sub(line,i,j-1)
+            local col = C.text
+            if KW[w] then col=C.keyword elseif BI[w] then col=C.builtin end
+            table.insert(out,{w,col}); i=j
+        else
+            table.insert(out,{ch,C.muted}); i=i+1
+        end
+    end
+    return out
+end
+
+-- ── helpers ──────────────────────────────────────────────
+local function clamp(v,a,b) if v<a then return a elseif v>b then return b end return v end
+local function rect(x,y,w,h,c) win:fillRect(x,y,w,h,c[1],c[2],c[3]) end
+local function txt(x,y,s,c,sz) win:drawText(x,y,s,c[1],c[2],c[3],sz or FS) end
+local function hline(y,c) rect(0,y,W,1,c) end
+local function vline(x,c) rect(x,0,1,H,c) end
+
+local function scroll_to(buf)
+    if buf.crow < buf.stop then buf.stop = buf.crow
+    elseif buf.crow >= buf.stop + VIS_ROWS then buf.stop = buf.crow - VIS_ROWS + 1 end
+    if buf.ccol-1 < buf.slft then buf.slft = buf.ccol-1
+    elseif buf.ccol-1 >= buf.slft + VIS_COLS then buf.slft = buf.ccol - VIS_COLS end
+    buf.stop = clamp(buf.stop, 1, math.max(1, #buf.lines))
+    buf.slft = clamp(buf.slft, 0, 9999)
+end
+
+local function ensure(buf)
+    buf.crow = clamp(buf.crow, 1, #buf.lines)
+    buf.ccol = clamp(buf.ccol, 1, #(buf.lines[buf.crow] or "")+1)
+end
+
+-- ── editing ──────────────────────────────────────────────
+local function ins(buf, ch)
+    local ln=buf.lines[buf.crow]
+    buf.lines[buf.crow]=string.sub(ln,1,buf.ccol-1)..ch..string.sub(ln,buf.ccol)
+    buf.ccol=buf.ccol+1; buf.dirty=true
+end
+
+local function del_back(buf)
+    if buf.ccol>1 then
+        local ln=buf.lines[buf.crow]
+        buf.lines[buf.crow]=string.sub(ln,1,buf.ccol-2)..string.sub(ln,buf.ccol)
+        buf.ccol=buf.ccol-1
+    elseif buf.crow>1 then
+        local above=buf.lines[buf.crow-1]
+        buf.ccol=#above+1
+        buf.lines[buf.crow-1]=above..buf.lines[buf.crow]
+        table.remove(buf.lines,buf.crow)
+        buf.crow=buf.crow-1
+    end
+    buf.dirty=true
+end
+
+local function del_fwd(buf)
+    local ln=buf.lines[buf.crow]
+    if buf.ccol<=#ln then
+        buf.lines[buf.crow]=string.sub(ln,1,buf.ccol-1)..string.sub(ln,buf.ccol+1)
+    elseif buf.crow<#buf.lines then
+        buf.lines[buf.crow]=ln..buf.lines[buf.crow+1]
+        table.remove(buf.lines,buf.crow+1)
+    end
+    buf.dirty=true
+end
+
+local function newline(buf)
+    local ln=buf.lines[buf.crow]
+    local indent=string.match(string.sub(ln,1,buf.ccol-1),"^%s*") or ""
+    if string.match((string.sub(ln,1,buf.ccol-1):gsub("%s+$","")),
+                    "(function|do|then|else|repeat|elseif)$") then
+        indent=indent.."    "
+    end
+    local rest=string.sub(ln,buf.ccol)
+    buf.lines[buf.crow]=string.sub(ln,1,buf.ccol-1)
+    table.insert(buf.lines, buf.crow+1, indent..rest)
+    buf.crow=buf.crow+1; buf.ccol=#indent+1; buf.dirty=true
+end
+
+local function do_tab(buf)
+    local sp=4-((buf.ccol-1)%4)
+    for i=1,sp do ins(buf," ") end
+end
+
+-- ── console ──────────────────────────────────────────────
+local con_lines   = {"── Console ──────────────────────"}
+local con_colors  = {C.muted}
+local MAX_CON     = 300
+local run_thread  = nil
+local run_channel = nil
+local is_running  = false
+
+local function con_push(msg, col)
+    for ln in string.gmatch(tostring(msg).."\n","([^\n]*)\n") do
+        table.insert(con_lines, ln)
+        table.insert(con_colors, col or C.text)
+    end
+    while #con_lines > MAX_CON do
+        table.remove(con_lines, 1)
+        table.remove(con_colors, 1)
+    end
+end
+
+local VIS_CON = math.floor((CONSOLE - 22) / LH)
+
+-- ── file tree ────────────────────────────────────────────
+local tree_dir   = fs.cwd()
+local tree_files = {}
+local tree_scroll= 0
+local show_tree  = true
+
+local function refresh_tree()
+    tree_files = {}
+    local ok, items = pcall(function() return fs.list(tree_dir) end)
+    if not ok then return end
+    for i, name in ipairs(items) do
+        local full = fs.join(tree_dir, name)
+        table.insert(tree_files, {
+            name = name,
+            path = full,
+            isdir = fs.isDir(full),
+            ext  = fs.ext(full).ext,
+        })
+    end
+    table.sort(tree_files, function(a,b)
+        if a.isdir ~= b.isdir then return a.isdir end
+        return a.name < b.name
+    end)
+end
+
+refresh_tree()
+
+-- ── file ops ─────────────────────────────────────────────
+local function open_path(path)
+    for i,t in ipairs(tabs) do
+        if t.path == path then tabidx=i; return end
+    end
+    if not fs.exists(path) then con_push("Not found: "..path, C.red); return end
+    local buf = new_buf(fs.basename(path))
+    buf.path = path
+    local content = fs.read(path)
+    buf.lines = {}
+    for ln in string.gmatch(content.."\n","([^\n]*)\n") do table.insert(buf.lines,ln) end
+    if #buf.lines==0 then buf.lines={""} end
+    buf.dirty=false
+    table.insert(tabs, buf)
+    tabidx=#tabs
+    con_push("Opened: "..path, C.accent2)
+end
+
+local function save_tab(buf)
+    if not buf then buf=curtab() end
+    if not buf.path then con_push("No path set — Ctrl+Shift+S to save as", C.orange); return end
+    fs.write(buf.path, table.concat(buf.lines, "\n"))
+    buf.dirty=false
+    con_push("Saved: "..buf.path, C.green)
+end
+
+local function close_tab(idx)
+    if #tabs==1 then tabs={new_buf("untitled.luah")}; tabidx=1; return end
+    table.remove(tabs, idx)
+    tabidx=clamp(tabidx, 1, #tabs)
+end
+
+-- ── run ──────────────────────────────────────────────────
+local _tmpdir = nil
+local function get_tmpdir()
+    if _tmpdir then return _tmpdir end
+    local py = cli.which("python3") and "python3" or "python"
+    local res = cli.exec(py.." -c \"import tempfile; print(tempfile.gettempdir())\"")
+    if res.ok and res.stdout ~= "" then
+        _tmpdir = string.gsub(res.stdout, "%s+$", "")
+    else
+        _tmpdir = fs.cwd()
+    end
+    return _tmpdir
+end
+
+local function run_buf(buf)
+    if is_running then con_push("Already running — Ctrl+K to kill", C.orange); return end
+    if buf.dirty or not buf.path then
+        if not buf.path then
+            buf.path = fs.join(get_tmpdir(), "_luah_run_tmp.luah")
+            buf.name = "_luah_run_tmp.luah"
+        end
+        save_tab(buf)
+    end
+    con_push("▶ Running: "..buf.path, C.green)
+    is_running = true
+    run_channel = concurrent.channel(200)
+    local ch = run_channel
+    local path = buf.path
+
+    -- detect python command once
+    local py = "python3"
+    if cli.which("python3") == nil then py = "python" end
+
+    run_thread = concurrent.thread(function()
+        local res = cli.exec(py.." luah.py \""..path.."\"")
+        if res.stdout ~= "" then
+            for ln in string.gmatch(res.stdout.."\n","([^\n]*)\n") do
+                ch:send({msg=ln, col=nil})
+            end
+        end
+        if res.stderr ~= "" then
+            for ln in string.gmatch(res.stderr.."\n","([^\n]*)\n") do
+                ch:send({msg=ln, col="err"})
+            end
+        end
+        ch:send({done=true, code=res.code})
+    end)
+end
+
+local function kill_run()
+    if run_thread then
+        is_running = false
+        run_thread = nil
+        run_channel = nil
+        con_push("■ Killed.", C.orange)
+    end
+end
+
+local function poll_run()
+    if not is_running or not run_channel then return end
+    for i=1,20 do
+        local msg = run_channel:recv(0)
+        if msg == nil then break end
+        if msg.done then
+            is_running = false
+            run_thread = nil
+            run_channel = nil
+            local col = (msg.code == 0) and C.green or C.red
+            local label = (msg.code == 0) and "■ Finished (exit 0)" or ("■ Exit code "..tostring(msg.code))
+            con_push(label, col)
+        else
+            local col = (msg.col == "err") and C.red or C.text
+            if msg.msg and msg.msg ~= "" then
+                con_push(msg.msg, col)
+            end
+        end
+    end
+end
+
+-- ── prompt ───────────────────────────────────────────────
+local prompt_on  = false
+local prompt_lbl = ""
+local prompt_buf = ""
+local prompt_fn  = nil
+
+local function prompt(lbl, def, fn)
+    prompt_on=true; prompt_lbl=lbl; prompt_buf=def or ""; prompt_fn=fn
+end
+
+-- ── key events ───────────────────────────────────────────
+local blink_t  = 0
+local show_cur = true
+
+local function handle_ev(ev)
+    local key=ev.key; local ch=ev.char; local ctrl=ev.ctrl; local shift=ev.shift
+
+    if prompt_on then
+        if key=="return" then
+            prompt_on=false
+            if prompt_fn then prompt_fn(prompt_buf) end
+        elseif key=="escape" then prompt_on=false
+        elseif key=="backspace" then
+            if #prompt_buf>0 then prompt_buf=string.sub(prompt_buf,1,#prompt_buf-1) end
+        elseif ch~="" then prompt_buf=prompt_buf..ch end
+        return
+    end
+
+    local buf=curtab()
+
+    if ctrl then
+        if key=="n" or key=="f1" then
+            table.insert(tabs, new_buf("untitled.luah")); tabidx=#tabs
+        elseif key=="w" then close_tab(tabidx)
+        elseif key=="o" then
+            prompt("Open: ","", function(p) if p~="" then open_path(p) end end)
+        elseif key=="s" and not shift then save_tab(buf)
+        elseif key=="s" and shift then
+            prompt("Save as: ", buf.name or "untitled.luah", function(p)
+                if p~="" then buf.path=p; buf.name=fs.basename(p); save_tab(buf) end
+            end)
+        elseif key=="r" then run_buf(buf)
+        elseif key=="k" then kill_run()
+        elseif key=="g" then
+            prompt("Go to line: ","", function(p)
+                local n=tonumber(p)
+                if n then buf.crow=clamp(n,1,#buf.lines); buf.ccol=1; scroll_to(buf) end
+            end)
+        elseif key=="f2" then show_tree=not show_tree
+        elseif key=="tab" then
+            tabidx=tabidx%#tabs+1
+        elseif key=="left" then tabidx=clamp(tabidx-1,1,#tabs)
+        elseif key=="right" then tabidx=clamp(tabidx+1,1,#tabs)
+        end
+        return
+    end
+
+    if key=="f1" then table.insert(tabs,new_buf("untitled.luah")); tabidx=#tabs; return end
+    if key=="f2" then show_tree=not show_tree; return end
+    if key=="f5" then run_buf(buf); return end
+    if key=="f6" then kill_run(); return end
+
+    if key=="up"       then buf.crow=buf.crow-1; ensure(buf); buf.ccol=clamp(buf.ccol,1,#(buf.lines[buf.crow] or "")+1)
+    elseif key=="down" then buf.crow=buf.crow+1; ensure(buf); buf.ccol=clamp(buf.ccol,1,#(buf.lines[buf.crow] or "")+1)
+    elseif key=="left" then
+        if buf.ccol>1 then buf.ccol=buf.ccol-1
+        elseif buf.crow>1 then buf.crow=buf.crow-1; buf.ccol=#buf.lines[buf.crow]+1 end
+    elseif key=="right" then
+        local ln=buf.lines[buf.crow] or ""
+        if buf.ccol<=#ln then buf.ccol=buf.ccol+1
+        elseif buf.crow<#buf.lines then buf.crow=buf.crow+1; buf.ccol=1 end
+    elseif key=="home"      then buf.ccol=1
+    elseif key=="end"       then buf.ccol=#(buf.lines[buf.crow] or "")+1
+    elseif key=="page up"   then buf.crow=buf.crow-VIS_ROWS; ensure(buf)
+    elseif key=="page down" then buf.crow=buf.crow+VIS_ROWS; ensure(buf)
+    elseif key=="return"    then newline(buf)
+    elseif key=="tab"       then do_tab(buf)
+    elseif key=="backspace" then del_back(buf)
+    elseif key=="delete"    then del_fwd(buf)
+    elseif ch~=""           then ins(buf, ch)
+    end
+
+    scroll_to(buf)
+    show_cur=true; blink_t=0
+end
+
+-- ── mouse ────────────────────────────────────────────────
+local mouse_was_down = false
+
+local function handle_mouse(mx, my, clicked)
+    if not clicked then return end
+
+    -- tab bar click
+    if my >= TOOLBAR and my < TOOLBAR+TABBAR then
+        local tx = show_tree and SIDEBAR or 0
+        local x = tx + 4
+        for i,t in ipairs(tabs) do
+            local w = (#t.name+4)*CW
+            if mx >= x and mx < x+w then
+                tabidx=i; return
+            end
+            x=x+w+2
+        end
+    end
+
+    -- file tree click
+    if show_tree and mx < SIDEBAR and my > TOOLBAR+TABBAR and my < CON_Y then
+        local row = math.floor((my - TOOLBAR - TABBAR) / LH) + tree_scroll
+        if row >= 1 and row <= #tree_files then
+            local f = tree_files[row]
+            if f.isdir then
+                tree_dir = f.path
+                refresh_tree()
+                tree_scroll = 0
+            elseif f.ext==".luah" or f.ext==".lua" or f.ext==".txt" then
+                open_path(f.path)
+            end
+        end
+        -- up dir button area (row 0)
+        if my < TOOLBAR + TABBAR + LH then
+            tree_dir = fs.dirname(tree_dir)
+            if tree_dir=="" then tree_dir="." end
+            refresh_tree(); tree_scroll=0
+        end
+    end
+
+    -- toolbar buttons
+    if my < TOOLBAR then
+        -- Run button zone ~right side
+        if mx > W-200 and mx < W-120 then run_buf(curtab())
+        elseif mx > W-110 and mx < W-60 then kill_run() end
+    end
+end
+
+-- ── drawing ──────────────────────────────────────────────
+local function draw_toolbar()
+    rect(0,0,W,TOOLBAR,C.surface)
+    hline(TOOLBAR-1, C.border)
+    txt(12,13,"⬡ Luah IDE",C.accent,FS+2)
+    txt(115,15,"written in Luah",C.muted,FS-1)
+
+    -- run button
+    local running_col = is_running and C.orange or C.green
+    rect(W-200,8,72,26,running_col)
+    txt(W-195,14, is_running and "■ Stop" or "▶ Run", C.bg, FS)
+
+    -- kill button
+    rect(W-120,8,52,26,C.red)
+    txt(W-116,14,"Kill",{0,0,0},FS)
+
+    -- tab shortcuts hint
+    txt(W-490,15,"F5=Run  F6=Kill  Ctrl+N=New  Ctrl+O=Open  Ctrl+S=Save",C.muted,FS-2)
+end
+
+local function draw_tabbar()
+    local tx = show_tree and SIDEBAR or 0
+    local ty = TOOLBAR
+    rect(tx, ty, W-tx, TABBAR, C.tabinact)
+    hline(ty+TABBAR-1, C.border)
+
+    local x = tx+4
+    for i,t in ipairs(tabs) do
+        local label = (t.dirty and "• " or "")..t.name
+        local w = (#label+3)*CW
+        local active = (i==tabidx)
+        local bg = active and C.tabact or C.tabinact
+        rect(x, ty, w, TABBAR, bg)
+        if active then
+            rect(x, ty, w, 2, C.accent)
+        end
+        local tc = active and C.text or C.muted
+        txt(x+CW, ty+8, label, tc, FS)
+        x=x+w+1
+        rect(x,ty,1,TABBAR,C.border)
+        x=x+2
+    end
+end
+
+local function draw_sidebar()
+    if not show_tree then return end
+    rect(0, TOOLBAR, SIDEBAR, H-TOOLBAR, C.surface)
+    vline(SIDEBAR-1, C.border)
+
+    local ty = TOOLBAR+TABBAR
+    rect(0, ty-LH-2, SIDEBAR, LH+2, C.surface2)
+    txt(4, ty-LH+1, "▲ "..fs.basename(tree_dir), C.accent2, FS-1)
+
+    local y = ty
+    for i=tree_scroll+1, #tree_files do
+        if y >= CON_Y then break end
+        local f = tree_files[i]
+        local icon = f.isdir and "▸ " or "  "
+        local col = f.isdir and C.accent2 or C.text
+        if f.ext==".luah" then col=C.green end
+        txt(6, y+2, icon..f.name, col, FS-1)
+        y=y+LH
+    end
+
+    txt(4, H-STATUS-5, "F2 toggle tree", C.muted, FS-2)
+end
+
+local function draw_editor()
+    local buf = curtab()
+    local ex = show_tree and ED_X or 0
+    local ew = show_tree and ED_W or W
+
+    rect(ex, ED_Y, LNUM_W, ED_H, C.surface)
+    rect(ex+LNUM_W, ED_Y, ew-LNUM_W, ED_H, C.bg)
+    vline(ex+LNUM_W-1, C.border)
+
+    local last = math.min(buf.stop+VIS_ROWS-1, #buf.lines)
+
+    for row=buf.stop, last do
+        local y = ED_Y + (row-buf.stop)*LH
+        if row==buf.crow then
+            rect(ex+LNUM_W, y, ew-LNUM_W, LH, C.curline)
+        end
+        local lnum=tostring(row)
+        local lnx = ex+LNUM_W-#lnum*(CW-1)-6
+        local lc = (row==buf.crow) and C.accent or C.linenum
+        txt(lnx, y+2, lnum, lc, FS-1)
+
+        local tokens=tokenize(buf.lines[row])
+        local tx=ex+LNUM_W+6-buf.slft*CW
+        for _,tok in ipairs(tokens) do
+            if tx+#tok[1]*CW > ex+LNUM_W and tx < ex+ew then
+                txt(tx, y+2, tok[1], tok[2], FS)
+            end
+            tx=tx+#tok[1]*CW
+        end
+    end
+
+    -- cursor
+    if show_cur then
+        local cy=ED_Y+(buf.crow-buf.stop)*LH
+        local cx=ex+LNUM_W+6+(buf.ccol-1-buf.slft)*CW
+        if cx>=ex+LNUM_W and cx<ex+ew then
+            rect(cx, cy+2, 2, LH-4, C.cursor)
+        end
+    end
+
+    -- scrollbar
+    local lc2=#buf.lines
+    if lc2>VIS_ROWS then
+        local sbh=math.max(6, math.floor(VIS_ROWS/lc2*ED_H))
+        local sbt=math.floor((buf.stop-1)/lc2*ED_H)
+        rect(ex+ew-5, ED_Y+sbt, 4, sbh, C.border)
+    end
+end
+
+local function draw_console()
+    rect(0, CON_Y, W, CONSOLE, C.surface)
+    hline(CON_Y, C.border)
+
+    -- header
+    rect(0, CON_Y, W, LH+4, C.surface2)
+    local hdr = "OUTPUT"
+    if is_running then hdr = hdr.."  ● running..." end
+    txt(10, CON_Y+4, hdr, is_running and C.accent or C.muted, FS-1)
+    txt(W-160, CON_Y+4, "Ctrl+K kill  F5 run", C.muted, FS-2)
+
+    local start = math.max(1, #con_lines - VIS_CON + 1)
+    for i=start, #con_lines do
+        local y = CON_Y + LH + 4 + (i-start)*LH
+        if y < H-STATUS-2 then
+            txt(10, y, con_lines[i], con_colors[i] or C.text, FS-1)
+        end
+    end
+end
+
+local function draw_status()
+    local buf=curtab()
+    rect(0, H-STATUS, W, STATUS, C.surface2)
+    hline(H-STATUS, C.border)
+    local info = "Ln "..buf.crow.."  Col "..buf.ccol.."  |  "..#buf.lines.." lines"
+    if buf.path then info=info.."  |  "..buf.path end
+    txt(8, H-STATUS+4, info, C.muted, FS-1)
+    local rtxt = #tabs.." tabs  |  Luah IDE v1.0"
+    txt(W-#rtxt*CW-10, H-STATUS+4, rtxt, C.muted, FS-1)
+end
+
+local function draw_prompt()
+    if not prompt_on then return end
+    local py = H - STATUS - 26
+    rect(0, py, W, 26, C.surface2)
+    hline(py, C.accent)
+    txt(10, py+6, prompt_lbl, C.accent, FS)
+    local px = 10 + (#prompt_lbl+1)*CW
+    txt(px, py+6, prompt_buf.."_", C.text, FS)
+end
+
+-- ── main loop ─────────────────────────────────────────────
+win:onUpdate(function(dt)
+    blink_t=blink_t+dt
+    if blink_t>0.5 then blink_t=0; show_cur=not show_cur end
+
+    poll_run()
+
+    local evs=win:getKeyEvents()
+    for i=1,#evs do handle_ev(evs[i]) end
+
+    local mx,my=win:getMousePos()
+    local md=win:isMouseDown(1)
+    if md and not mouse_was_down then
+        handle_mouse(mx,my,true)
+    end
+    mouse_was_down=md
+end)
+
+win:onDraw(function()
+    rect(0,0,W,H,C.bg)
+    draw_editor()
+    if show_tree then draw_sidebar() end
+    draw_tabbar()
+    draw_toolbar()
+    draw_console()
+    draw_status()
+    draw_prompt()
+end)
+
+con_push("Luah IDE ready. F5=Run  Ctrl+O=Open  Ctrl+N=New tab", C.accent2)
+con_push("Click files in the tree to open them.", C.muted)
+
+win:run(60)

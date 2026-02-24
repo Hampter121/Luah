@@ -907,6 +907,256 @@ for i, t in ipairs(threads) do
     end
 end
 """,
+    # -- SOUND --
+    "sound beep": """\
+-- Simple beep tones (requires numpy for best quality)
+if sound.available then
+    sound.beep(440, 0.3, 0.5)   -- A4 note, 0.3s
+    wait(0.4)
+    sound.beep(523, 0.3, 0.5)   -- C5 note
+    wait(0.4)
+    sound.beep(659, 0.5, 0.5)   -- E5 note
+    print("Beeps played!")
+else
+    print("Sound not available (install pygame with mixer support)")
+end
+""",
+
+    "sound load & play": """\
+-- Load and play a sound file
+-- sound.load() supports WAV, OGG, MP3
+if sound.available then
+    local snd = sound.load("effect.wav")
+    snd:play()
+    wait(1.0)
+    snd:volume(0.5)  -- half volume
+    snd:play()
+    wait(1.0)
+    snd:stop()
+
+    -- background music
+    sound.musicPlay("music.ogg", true)   -- loop=true
+    wait(3.0)
+    sound.musicVolume(0.3)
+    wait(2.0)
+    sound.musicStop()
+    print("Done.")
+else
+    print("Sound unavailable")
+end
+""",
+
+    # -- HTTP SERVER --
+    "http server": """\
+-- Minimal HTTP server
+local server = http.serve(8080, function(req)
+    print(req.method .. " " .. req.path)
+
+    if req.path == "/" then
+        return http.response("<h1>Hello from Luah!</h1>", 200, "text/html")
+    elseif req.path == "/api/time" then
+        return http.jsonResponse({t = time.stamp(), now = time.now()})
+    elseif req.path == "/api/echo" then
+        return http.jsonResponse({method=req.method, body=req.body})
+    else
+        return http.response("Not Found", 404)
+    end
+end)
+
+print("Server running at http://localhost:8080")
+print("Press Ctrl+C to stop...")
+wait(30)   -- serve for 30 seconds
+server:stop()
+print("Server stopped.")
+""",
+
+    # -- NEW STRING OPS --
+    "string extras": """\
+-- New string utilities in Luah 1.1
+local s = "  Hello, Luah World!  "
+print(string.trim(s))
+print(string.startsWith("hello.luah", "hello"))
+print(string.endsWith("hello.luah", ".luah"))
+print(string.contains("Hello World", "World"))
+
+-- split
+local csv = "apple,banana,cherry,date"
+local parts = string.split(csv, ",")
+for i, v in ipairs(parts) do
+    print(i .. ": " .. v)
+end
+
+-- padding
+print(string.padLeft("42", 6, "0"))   -- 000042
+print(string.padRight("hi", 8, "."))  -- hi......
+""",
+
+    # -- NEW TABLE OPS --
+    "table extras": """\
+-- New table utilities in Luah 1.1
+local nums = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+
+local doubled = table.map(nums, function(v) return v * 2 end)
+print("Doubled: " .. table.concat(doubled, ", "))
+
+local evens = table.filter(nums, function(v) return v % 2 == 0 end)
+print("Evens: " .. table.concat(evens, ", "))
+
+local sum = table.reduce(nums, function(acc, v) return acc + v end, 0)
+print("Sum: " .. sum)
+
+print("Contains 5? " .. tostring(table.contains(nums, 5)))
+print("Contains 99? " .. tostring(table.contains(nums, 99)))
+
+local a = {x=1, y=2}
+local b = {y=99, z=3}
+local merged = table.merge(a, b)
+print("Merged y=" .. merged.y .. " z=" .. merged.z)
+""",
+
+    # -- REQUIRE --
+    "require module": """\
+-- require() loads other .luah files as modules
+-- mylib.luah should return a table:
+--   local M = {}
+--   function M.greet(name) return "Hello, " .. name end
+--   return M
+
+-- local mylib = require("mylib")
+-- print(mylib.greet("world"))
+
+-- For now, inline demo of the pattern:
+local function makeModule()
+    local M = {}
+    function M.greet(name) return "Hello, " .. name .. "!" end
+    function M.add(a, b)   return a + b end
+    return M
+end
+
+local lib = makeModule()
+print(lib.greet("Luah"))
+print("3 + 4 = " .. lib.add(3, 4))
+""",
+
+    # -- LUAH GLOBALS --
+    "luah info": """\
+-- luah global: platform info
+print("Luah version: " .. luah.version)
+print("Platform:     " .. luah.platform)
+print("Architecture: " .. luah.arch)
+print("Python:       " .. luah.python)
+print("Time stamp:   " .. time.stamp())
+print("UUID:         " .. math.uuid())
+""",
+
+    # -- NEW GRAPHIX --
+    "rounded rects": """\
+local win = graphix.newWindow(400, 300, "Rounded Rects")
+
+win:onDraw(function()
+    win:fillRoundRect(20,  20,  360, 80,  16, 70,  130, 200)
+    win:fillRoundRect(20,  120, 160, 60,  30, 220, 80,  180)
+    win:fillRoundRect(200, 120, 180, 60,  8,  180, 220, 80)
+    win:drawRoundRect(20,  200, 360, 80,  20, 255, 200, 80, 2)
+end)
+
+win:run(60)
+""",
+
+    "opacity / alpha": """\
+local win = graphix.newWindow(400, 300, "Opacity Demo")
+local t = 0
+
+win:onUpdate(function(dt) t = t + dt end)
+
+win:onDraw(function()
+    -- background
+    win:fillRect(0, 0, 400, 300, 20, 20, 40)
+
+    -- layer semi-transparent rects
+    win:setOpacity(1.0)
+    win:fillRect(50, 50, 150, 150, 255, 80, 80)
+
+    win:setOpacity(0.6)
+    win:fillRect(100, 80, 150, 150, 80, 80, 255)
+
+    win:setOpacity(0.4)
+    win:fillRect(150, 110, 150, 150, 80, 255, 80)
+
+    win:resetOpacity()
+    -- pulsing circle
+    local alpha = (math.sin(t * 2) + 1) / 2
+    win:setOpacity(alpha)
+    win:fillCircle(300, 200, 60, 255, 220, 50)
+    win:resetOpacity()
+end)
+
+win:run(60)
+""",
+
+    "draw image": """\
+-- Draw an image file onto the window
+-- Place any PNG/JPG in the same folder as your script
+local win = graphix.newWindow(640, 480, "Image Demo")
+
+win:onDraw(function()
+    -- draw image at natural size
+    win:drawImage("image.png", 0, 0)
+
+    -- draw image scaled to 200x200
+    win:drawImage("image.png", 400, 100, 200, 200)
+end)
+
+win:run(60)
+""",
+
+    "getTextWidth": """\
+-- Measure text width for centering/layout
+local win = graphix.newWindow(500, 300, "Text Layout")
+local labels = {"Short", "Medium length", "This is a much longer string"}
+
+win:onDraw(function()
+    local y = 40
+    for _, label in ipairs(labels) do
+        local tw = win:getTextWidth(label, 18)
+        local cx = (500 - tw) / 2  -- center
+        win:fillRoundRect(cx - 8, y - 4, tw + 16, 28, 6, 40, 40, 80)
+        win:drawText(cx, y, label, 255, 220, 100, 18)
+        y = y + 60
+    end
+end)
+
+win:run(60)
+""",
+
+    "mouse & scroll callbacks": """\
+local win = graphix.newWindow(500, 400, "Mouse Events")
+local clicks = {}
+local scroll_y = 0
+
+win:onMouseDown(function(x, y, btn)
+    table.insert(clicks, {x=x, y=y, btn=btn})
+    if #clicks > 10 then table.remove(clicks, 1) end
+end)
+
+win:onScroll(function(delta)
+    scroll_y = scroll_y - delta * 20
+end)
+
+win:onDraw(function()
+    win:fillRect(0, 0, 500, 400, 15, 15, 30)
+    win:drawText(10, 10, "Click anywhere. Scroll to move.", 150, 150, 200, 13)
+    win:drawText(10, 28, "Scroll offset: " .. math.floor(scroll_y), 100, 200, 150, 13)
+
+    for i, c in ipairs(clicks) do
+        local col = c.btn == 1 and {80,200,255} or {255,150,80}
+        win:fillCircle(c.x, c.y - scroll_y, 12, col[1], col[2], col[3])
+        win:drawText(c.x + 14, c.y - scroll_y - 8, "btn"..c.btn, 200, 200, 200, 11)
+    end
+end)
+
+win:run(60)
+""",
 }
 
 
@@ -1009,7 +1259,7 @@ class LuahApp:
         tk.Label(yuritb, text="⬡ Luah", bg=yuricolors["toolbar"],
                  fg=yuricolors["accent"], font=("Segoe UI", 13, "bold")).pack(side=tk.LEFT, padx=(14, 4))
 
-        tk.Label(yuritb, text="Lua 5.4+", bg=yuricolors["surface"],
+        tk.Label(yuritb, text="Lua 5.1+", bg=yuricolors["surface"],
                  fg=yuricolors["muted"], font=yurifontmonos, padx=8, pady=2).pack(side=tk.LEFT, padx=6)
 
         tk.Button(yuritb, text="＋ Tab",   command=self._yurinew_tab,     **self._yuribtn()).pack(side=tk.LEFT, padx=2, pady=8)

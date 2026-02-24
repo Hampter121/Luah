@@ -1,0 +1,402 @@
+-- editor.luah — a text editor written in Luah
+
+local W, H = 900, 640
+local win = graphix.newWindow(W, H, "Luah Editor")
+
+local C = {
+    bg      = {13,  15,  20},
+    surface = {20,  24,  34},
+    border  = {38,  44,  58},
+    text    = {248, 248, 242},
+    muted   = {98,  114, 164},
+    accent  = {232, 197, 71},
+    green   = {80,  250, 123},
+    red     = {255, 85,  85},
+    linenum = {68,  78,  120},
+    cursor  = {232, 197, 71},
+    keyword = {189, 147, 249},
+    str_c   = {241, 250, 140},
+    comment = {98,  114, 164},
+    number  = {255, 184, 108},
+    builtin = {80,  250, 200},
+    curline = {18,  22,  32},
+}
+
+local FS       = 13
+local LINE_H   = FS + 5
+local LNUM_W   = 52
+local TOP_H    = 40
+local BOT_H    = 24
+local ED_X     = LNUM_W
+local ED_Y     = TOP_H
+local ED_W     = W - LNUM_W
+local ED_H     = H - TOP_H - BOT_H
+local CW       = 8   -- char width in pixels
+
+-- ── state ────────────────────────────────────────────────
+local lines      = {""}
+local crow, ccol = 1, 1
+local scroll_top = 1
+local scroll_lft = 0
+local filepath   = nil
+local dirty      = false
+local vis_rows   = math.floor(ED_H / LINE_H)
+local vis_cols   = math.floor(ED_W / CW) - 2
+
+local blink_t    = 0
+local show_cur   = true
+
+local status     = "Luah Editor  |  Ctrl+O Open  Ctrl+S Save  Ctrl+N New  Ctrl+R Run  Ctrl+G Goto"
+local status_col = C.accent
+
+-- prompt bar
+local prompt_on  = false
+local prompt_lbl = ""
+local prompt_buf = ""
+local prompt_fn  = nil
+
+-- ── syntax ───────────────────────────────────────────────
+local KW = {
+    ["local"]=1,["function"]=1,["return"]=1,["if"]=1,["then"]=1,
+    ["else"]=1,["elseif"]=1,["end"]=1,["do"]=1,["while"]=1,
+    ["for"]=1,["repeat"]=1,["until"]=1,["in"]=1,["not"]=1,
+    ["and"]=1,["or"]=1,["true"]=1,["false"]=1,["nil"]=1,["break"]=1,
+}
+local BI = {
+    ["print"]=1,["pairs"]=1,["ipairs"]=1,["type"]=1,["tostring"]=1,
+    ["tonumber"]=1,["math"]=1,["string"]=1,["table"]=1,["wait"]=1,
+    ["graphix"]=1,["fs"]=1,["json"]=1,["net"]=1,["db"]=1,["cli"]=1,
+    ["concurrent"]=1,["tcp"]=1,["ws"]=1,["xml"]=1,["time"]=1,
+    ["error"]=1,["pcall"]=1,["assert"]=1,["require"]=1,["os"]=1,
+    ["io"]=1,["coroutine"]=1,["select"]=1,["unpack"]=1,
+}
+
+local function tokenize(line)
+    local out = {}
+    local i, len = 1, #line
+
+    local ci = string.find(line, "--")
+    if ci then
+        if ci > 1 then
+            for _, t in ipairs(tokenize(string.sub(line, 1, ci-1))) do
+                table.insert(out, t)
+            end
+        end
+        table.insert(out, {string.sub(line, ci), C.comment})
+        return out
+    end
+
+    while i <= len do
+        local ch = string.sub(line, i, i)
+        if ch == '"' or ch == "'" then
+            local j = i + 1
+            while j <= len do
+                if string.sub(line, j, j) == ch and string.sub(line, j-1, j-1) ~= "\\" then break end
+                j = j + 1
+            end
+            table.insert(out, {string.sub(line, i, j), C.str_c})
+            i = j + 1
+        elseif string.match(ch, "%d") then
+            local j = i
+            while j <= len and string.match(string.sub(line, j, j), "[%d%.xXa-fA-F]") do j = j + 1 end
+            table.insert(out, {string.sub(line, i, j-1), C.number})
+            i = j
+        elseif string.match(ch, "[%a_]") then
+            local j = i
+            while j <= len and string.match(string.sub(line, j, j), "[%w_]") do j = j + 1 end
+            local w = string.sub(line, i, j-1)
+            local col = C.text
+            if KW[w] then col = C.keyword elseif BI[w] then col = C.builtin end
+            table.insert(out, {w, col})
+            i = j
+        else
+            table.insert(out, {ch, C.muted})
+            i = i + 1
+        end
+    end
+    return out
+end
+
+-- ── helpers ──────────────────────────────────────────────
+local function clamp(v, lo, hi)
+    if v < lo then return lo elseif v > hi then return hi end
+    return v
+end
+local function setstatus(msg, col) status = msg; status_col = col or C.accent end
+local function curline() return lines[crow] or "" end
+local function linecount() return #lines end
+
+local function scroll_to()
+    if crow < scroll_top then scroll_top = crow
+    elseif crow >= scroll_top + vis_rows then scroll_top = crow - vis_rows + 1 end
+    if ccol - 1 < scroll_lft then scroll_lft = ccol - 1
+    elseif ccol - 1 >= scroll_lft + vis_cols then scroll_lft = ccol - vis_cols end
+    scroll_top = clamp(scroll_top, 1, math.max(1, linecount()))
+    scroll_lft = clamp(scroll_lft, 0, 9999)
+end
+
+local function ensure()
+    crow = clamp(crow, 1, linecount())
+    ccol = clamp(ccol, 1, #curline() + 1)
+end
+
+-- ── editing ──────────────────────────────────────────────
+local function ins(ch)
+    local ln = lines[crow]
+    lines[crow] = string.sub(ln, 1, ccol-1) .. ch .. string.sub(ln, ccol)
+    ccol = ccol + 1
+    dirty = true
+end
+
+local function del_back()
+    if ccol > 1 then
+        local ln = lines[crow]
+        lines[crow] = string.sub(ln, 1, ccol-2) .. string.sub(ln, ccol)
+        ccol = ccol - 1
+    elseif crow > 1 then
+        local above = lines[crow-1]
+        ccol = #above + 1
+        lines[crow-1] = above .. lines[crow]
+        table.remove(lines, crow)
+        crow = crow - 1
+    end
+    dirty = true
+end
+
+local function del_fwd()
+    local ln = lines[crow]
+    if ccol <= #ln then
+        lines[crow] = string.sub(ln, 1, ccol-1) .. string.sub(ln, ccol+1)
+    elseif crow < linecount() then
+        lines[crow] = ln .. lines[crow+1]
+        table.remove(lines, crow+1)
+    end
+    dirty = true
+end
+
+local function newline()
+    local ln = lines[crow]
+    local indent = string.match(string.sub(ln, 1, ccol-1), "^%s*") or ""
+    if string.match(string.sub(ln, 1, ccol-1):gsub("%s+$",""),
+                    "(function|do|then|else|repeat|elseif)$") then
+        indent = indent .. "    "
+    end
+    local rest = string.sub(ln, ccol)
+    lines[crow] = string.sub(ln, 1, ccol-1)
+    table.insert(lines, crow+1, indent .. rest)
+    crow = crow + 1
+    ccol = #indent + 1
+    dirty = true
+end
+
+local function do_tab()
+    local sp = 4 - ((ccol-1) % 4)
+    for i = 1, sp do ins(" ") end
+end
+
+-- ── file ops ─────────────────────────────────────────────
+local function load(path)
+    if not fs.exists(path) then setstatus("Not found: "..path, C.red); return end
+    local content = fs.read(path)
+    lines = {}
+    for ln in string.gmatch(content.."\n", "([^\n]*)\n") do
+        table.insert(lines, ln)
+    end
+    if #lines == 0 then lines = {""} end
+    crow, ccol, scroll_top, scroll_lft = 1, 1, 1, 0
+    filepath = path
+    dirty = false
+    win:setTitle("Luah Editor — " .. fs.basename(path))
+    setstatus("Opened: "..path, C.green)
+end
+
+local function save()
+    if not filepath then
+        prompt_on  = true
+        prompt_lbl = "Save as: "
+        prompt_buf = "untitled.luah"
+        prompt_fn  = function(p)
+            if p ~= "" then filepath = p; fs.write(p, table.concat(lines, "\n")); dirty = false
+                win:setTitle("Luah Editor — "..fs.basename(p))
+                setstatus("Saved: "..p, C.green)
+            end
+        end
+        return
+    end
+    fs.write(filepath, table.concat(lines, "\n"))
+    dirty = false
+    setstatus("Saved: "..filepath, C.green)
+end
+
+local function run_script()
+    save()
+    if not filepath then return end
+    setstatus("Running "..filepath.."...", C.accent)
+    local res = cli.exec("python3 luah.py "..filepath)
+    if res.ok then
+        setstatus("Run OK — "..string.gsub(string.sub(res.stdout,1,60),"\n"," "), C.green)
+    else
+        setstatus("ERR: "..string.sub(string.gsub(res.stderr,"\n"," "),1,80), C.red)
+    end
+end
+
+-- ── key handling ─────────────────────────────────────────
+local function handle_event(ev)
+    local key   = ev.key
+    local char  = ev.char
+    local ctrl  = ev.ctrl
+    local shift = ev.shift
+
+    if prompt_on then
+        if key == "return" then
+            prompt_on = false
+            if prompt_fn then prompt_fn(prompt_buf) end
+        elseif key == "escape" then
+            prompt_on = false
+            setstatus("Cancelled.", C.muted)
+        elseif key == "backspace" then
+            if #prompt_buf > 0 then
+                prompt_buf = string.sub(prompt_buf, 1, #prompt_buf-1)
+            end
+        elseif char ~= "" then
+            prompt_buf = prompt_buf .. char
+        end
+        return
+    end
+
+    -- ctrl shortcuts
+    if ctrl then
+        if key == "n" then
+            lines = {""}; crow,ccol,scroll_top,scroll_lft = 1,1,1,0
+            filepath = nil; dirty = false
+            win:setTitle("Luah Editor — untitled.luah")
+            setstatus("New file.", C.accent2)
+        elseif key == "o" then
+            prompt_on=true; prompt_lbl="Open: "; prompt_buf=""
+            prompt_fn = function(p) if p~="" then load(p) end end
+        elseif key == "s" then save()
+        elseif key == "r" then run_script()
+        elseif key == "g" then
+            prompt_on=true; prompt_lbl="Go to line: "; prompt_buf=""
+            prompt_fn = function(p)
+                local n = tonumber(p)
+                if n then crow=clamp(n,1,linecount()); ccol=1; scroll_to() end
+            end
+        end
+        return
+    end
+
+    -- navigation
+    if key == "up"       then crow = crow - 1; ensure(); ccol = clamp(ccol, 1, #curline()+1)
+    elseif key == "down" then crow = crow + 1; ensure(); ccol = clamp(ccol, 1, #curline()+1)
+    elseif key == "left" then
+        if ccol > 1 then ccol = ccol - 1
+        elseif crow > 1 then crow=crow-1; ccol=#curline()+1 end
+    elseif key == "right" then
+        if ccol <= #curline() then ccol=ccol+1
+        elseif crow < linecount() then crow=crow+1; ccol=1 end
+    elseif key == "home"     then ccol = 1
+    elseif key == "end"      then ccol = #curline() + 1
+    elseif key == "page up"  then crow = crow - vis_rows; ensure()
+    elseif key == "page down"then crow = crow + vis_rows; ensure()
+    elseif key == "return"   then newline()
+    elseif key == "tab"      then do_tab()
+    elseif key == "backspace"then del_back()
+    elseif key == "delete"   then del_fwd()
+    elseif char ~= ""        then ins(char)
+    end
+
+    scroll_to()
+    show_cur = true; blink_t = 0
+end
+
+-- ── drawing ──────────────────────────────────────────────
+local function draw_toolbar()
+    win:fillRect(0, 0, W, TOP_H, C.surface[1], C.surface[2], C.surface[3])
+    win:fillRect(0, TOP_H-1, W, 1, C.border[1], C.border[2], C.border[3])
+    local title = "⬡ Luah Editor"
+    if filepath then title = title.." — "..fs.basename(filepath)
+    else title = title.." — untitled.luah" end
+    if dirty then title = title.." •" end
+    win:drawText(12, 12, title, C.accent[1], C.accent[2], C.accent[3], FS+1)
+    local info = "Ln "..crow.."  Col "..ccol.."  |  "..linecount().." lines"
+    win:drawText(W - (#info*7) - 12, 13, info, C.muted[1], C.muted[2], C.muted[3], FS-1)
+end
+
+local function draw_status()
+    local sy = H - BOT_H
+    win:fillRect(0, sy, W, BOT_H, C.surface[1], C.surface[2], C.surface[3])
+    win:fillRect(0, sy, W, 1, C.border[1], C.border[2], C.border[3])
+    if prompt_on then
+        win:drawText(10, sy+5, prompt_lbl, C.accent[1], C.accent[2], C.accent[3], FS)
+        local px = 10 + #prompt_lbl * CW + 4
+        win:drawText(px, sy+5, prompt_buf.."_", C.text[1], C.text[2], C.text[3], FS)
+    else
+        win:drawText(10, sy+5, status, status_col[1], status_col[2], status_col[3], FS-1)
+    end
+end
+
+local function draw_editor()
+    win:fillRect(0, ED_Y, LNUM_W, ED_H, C.surface[1], C.surface[2], C.surface[3])
+    win:fillRect(LNUM_W-1, ED_Y, 1, ED_H, C.border[1], C.border[2], C.border[3])
+    win:fillRect(LNUM_W, ED_Y, ED_W, ED_H, C.bg[1], C.bg[2], C.bg[3])
+
+    local last = math.min(scroll_top + vis_rows - 1, linecount())
+
+    for row = scroll_top, last do
+        local y = ED_Y + (row - scroll_top) * LINE_H
+
+        if row == crow then
+            win:fillRect(LNUM_W, y, ED_W, LINE_H, C.curline[1], C.curline[2], C.curline[3])
+        end
+
+        local lnum = tostring(row)
+        local lx = LNUM_W - #lnum * (CW-1) - 8
+        local lc = (row == crow) and C.accent or C.linenum
+        win:drawText(lx, y+3, lnum, lc[1], lc[2], lc[3], FS-1)
+
+        local tokens = tokenize(lines[row])
+        local tx = LNUM_W + 8 - scroll_lft * CW
+        for _, tok in ipairs(tokens) do
+            if tx + #tok[1]*CW > LNUM_W and tx < W then
+                win:drawText(tx, y+3, tok[1], tok[2][1], tok[2][2], tok[2][3], FS)
+            end
+            tx = tx + #tok[1] * CW
+        end
+    end
+
+    -- cursor
+    if show_cur then
+        local cy = ED_Y + (crow - scroll_top) * LINE_H
+        local cx = LNUM_W + 8 + (ccol - 1 - scroll_lft) * CW
+        if cx >= LNUM_W and cx < W then
+            win:fillRect(cx, cy+2, 2, LINE_H-4, C.cursor[1], C.cursor[2], C.cursor[3])
+        end
+    end
+
+    -- scrollbar
+    if linecount() > vis_rows then
+        local sbh = math.max(8, math.floor(vis_rows / linecount() * ED_H))
+        local sbt = math.floor((scroll_top-1) / linecount() * ED_H)
+        win:fillRect(W-5, ED_Y+sbt, 4, sbh, C.border[1], C.border[2], C.border[3])
+    end
+end
+
+-- ── main ─────────────────────────────────────────────────
+win:onUpdate(function(dt)
+    blink_t = blink_t + dt
+    if blink_t > 0.5 then blink_t = 0; show_cur = not show_cur end
+
+    local evs = win:getKeyEvents()
+    for i = 1, #evs do
+        handle_event(evs[i])
+    end
+end)
+
+win:onDraw(function()
+    draw_toolbar()
+    draw_editor()
+    draw_status()
+end)
+
+win:run(60)
