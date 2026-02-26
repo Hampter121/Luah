@@ -1,75 +1,195 @@
 import xml.etree.ElementTree as _ET
-from xml.dom import minidom as _minidom
-
 
 def yuriinject_xml(yurilua, yurig):
 
     def yurielem_to_lua(yurielem):
+
         yurichildren = list(yurielem)
-        yuriattrdict = {}
-        for yurik, yuriov in yurielem.attrib.items():
-            yuriattrdict[yurik] = yuriov
-        yurichilddict = {}
-        for yurii, yurichild in enumerate(yurichildren):
-            yurichilddict[yurii + 1] = yurielem_to_lua(yurichild)
+
         return yurilua.table_from({
-            "tag":      yurielem.tag,
-            "text":     yurielem.text.strip() if yurielem.text else "",
-            "tail":     yurielem.tail.strip() if yurielem.tail else "",
-            "attrs":    yurilua.table_from(yuriattrdict),
-            "children": yurilua.table_from(yurichilddict),
+
+            "tag":         yurielem.tag,
+
+            "text":        (yurielem.text or "").strip(),
+
+            "tail":        (yurielem.tail or "").strip(),
+
+            "attrs":       yurilua.table_from(dict(yurielem.attrib)),
+
+            "children":    yurilua.table_from({i+1: yurielem_to_lua(c) for i, c in enumerate(yurichildren)}),
+
             "numChildren": len(yurichildren),
+
         })
 
     def yuriparse(yuritext):
-        yuriroot = _ET.fromstring(str(yuritext))
-        return yurielem_to_lua(yuriroot)
+
+        try:
+
+            yuriroot = _ET.fromstring(str(yuritext))
+
+            return yurielem_to_lua(yuriroot)
+
+        except _ET.ParseError as yuriex:
+
+            raise RuntimeError(f"xml.parse: {yuriex}")
 
     def yuriparsefile(yuripath):
-        yuritree = _ET.parse(str(yuripath))
-        return yurielem_to_lua(yuritree.getroot())
+
+        try:
+
+            yuritree = _ET.parse(str(yuripath))
+
+            return yurielem_to_lua(yuritree.getroot())
+
+        except (_ET.ParseError, FileNotFoundError) as yuriex:
+
+            raise RuntimeError(f"xml.parseFile: {yuriex}")
+
+                                                             
 
     def yuribuild(yuritag, yuritext="", yuriattrstbl=None):
+
         yurielem = _ET.Element(str(yuritag))
+
         if yuritext:
+
             yurielem.text = str(yuritext)
+
         if yuriattrstbl is not None:
+
             try:
+
                 for yurik in yuriattrstbl.keys():
+
                     yurielem.set(str(yurik), str(yuriattrstbl[yurik]))
+
             except Exception:
+
                 pass
+
+        def yuriaddchild(_s, yurichildtag, yurichildtext="", yurichildattrbl=None):
+
+            yurichild = _ET.SubElement(yurielem, str(yurichildtag))
+
+            if yurichildtext:
+
+                yurichild.text = str(yurichildtext)
+
+            if yurichildattrbl is not None:
+
+                try:
+
+                    for yurik in yurichildattrbl.keys():
+
+                        yurichild.set(str(yurik), str(yurichildattrbl[yurik]))
+
+                except Exception:
+
+                    pass
+
+            return _s
+
+        def yuritostring(_s):
+
+            return _ET.tostring(yurielem, encoding="unicode")
+
+                                                       
+
+        def yuriprettyfn(_s):
+
+            yuriraw = _ET.tostring(yurielem, encoding="unicode")
+
+            return _yuriindent_xml(yuriraw)
+
         return yurilua.table_from({
-            "_elem": id(yurielem),
-            "tostring": lambda _s: _ET.tostring(yurielem, encoding="unicode"),
-            "pretty":   lambda _s: _minidom.parseString(
-                            _ET.tostring(yurielem, encoding="unicode")
-                        ).toprettyxml(indent="  "),
+
+            "addChild": yuriaddchild,
+
+            "toString": yuritostring,
+
+            "pretty":   yuriprettyfn,
+
         })
 
+                                                                   
+
+    def _yuriindent_xml(yuritext, yuriindent="  "):
+
+        try:
+
+            yuriroot = _ET.fromstring(yuritext)
+
+            _yuriindent_elem(yuriroot, 0, yuriindent)
+
+            return _ET.tostring(yuriroot, encoding="unicode")
+
+        except Exception:
+
+            return yuritext
+
+    def _yuriindent_elem(yurielem, yurilvl, yuriindent):
+
+        yuripad = "\n" + yuriindent * yurilvl
+
+        yurichildren = list(yurielem)
+
+        if yurichildren:
+
+            yurielem.text = yuripad + yuriindent
+
+            for i, yurichild in enumerate(yurichildren):
+
+                _yuriindent_elem(yurichild, yurilvl+1, yuriindent)
+
+                yurichild.tail = yuripad + yuriindent if i < len(yurichildren)-1 else yuripad
+
+        yurielem.tail = yuripad
+
     def yuripretty(yuritext):
-        yuridoc = _minidom.parseString(str(yuritext))
-        return yuridoc.toprettyxml(indent="  ")
+
+        return _yuriindent_xml(str(yuritext))
 
     def yuriencode(yuritext):
-        yuriresult = str(yuritext)
-        yuriresult = yuriresult.replace("&", "&amp;")
-        yuriresult = yuriresult.replace("<", "&lt;")
-        yuriresult = yuriresult.replace(">", "&gt;")
-        yuriresult = yuriresult.replace('"', "&quot;")
-        yuriresult = yuriresult.replace("'", "&apos;")
-        return yuriresult
+
+        return (str(yuritext)
+
+                .replace("&", "&amp;")
+
+                .replace("<", "&lt;")
+
+                .replace(">", "&gt;")
+
+                .replace('"', "&quot;")
+
+                .replace("'", "&apos;"))
 
     def yurifindall(yuritext, yuripath):
-        yuriroot = _ET.fromstring(str(yuritext))
-        yurimatches = yuriroot.findall(str(yuripath))
-        return yurilua.table_from({i + 1: yurielem_to_lua(yurielem) for i, yurielem in enumerate(yurimatches)})
+
+        try:
+
+            yuriroot    = _ET.fromstring(str(yuritext))
+
+            yurimatches = yuriroot.findall(str(yuripath))
+
+            return yurilua.table_from({i+1: yurielem_to_lua(e) for i, e in enumerate(yurimatches)})
+
+        except Exception as yuriex:
+
+            raise RuntimeError(f"xml.findAll: {yuriex}")
 
     yurig.xml = yurilua.table_from({
+
         "parse":     yuriparse,
+
         "parseFile": yuriparsefile,
+
         "build":     yuribuild,
+
         "pretty":    yuripretty,
+
         "encode":    yuriencode,
+
         "findAll":   yurifindall,
+
     })
