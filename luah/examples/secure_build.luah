@@ -1,0 +1,243 @@
+-- Luah Example: Secure Build System
+-- Demonstrates env, process, and crypto libraries working together
+-- This simulates a secure CI/CD build pipeline
+
+print("=== Secure Build System Demo ===\n")
+
+-- ==================== CONFIGURATION ====================
+
+print("[1/6] Loading configuration from environment...")
+
+-- Load build configuration from environment variables
+env.set("BUILD_ENV", "production")
+env.set("BUILD_VERSION", "1.0.0")
+env.set("SIGNING_KEY", "secret_build_key_xyz")
+env.set("ARTIFACT_DIR", "./build_artifacts")
+
+local config = {
+    environment = env.get("BUILD_ENV", "development"),
+    version = env.get("BUILD_VERSION", "0.0.0"),
+    signing_key = env.get("SIGNING_KEY"),
+    artifact_dir = env.get("ARTIFACT_DIR", "./build"),
+    timestamp = time.stamp()
+}
+
+print("  Environment:", config.environment)
+print("  Version:", config.version)
+print("  Artifact Dir:", config.artifact_dir)
+print("  Build Time:", config.timestamp)
+
+-- ==================== PRE-BUILD CHECKS ====================
+
+print("\n[2/6] Running pre-build checks...")
+
+-- Check if required tools are available
+local tools = {"git", "python", "ls"}
+local all_tools_available = true
+
+for _, tool in ipairs(tools) do
+    local check = process.exec(tool .. " --version 2>&1")
+    if check.success or check.exitcode == 0 then
+        print("  ✓ " .. tool .. " available")
+    else
+        print("  ✗ " .. tool .. " not found")
+        all_tools_available = false
+    end
+end
+
+if not all_tools_available then
+    print("\n⚠️  Some tools are missing, continuing with demo anyway...")
+end
+
+-- Get git info if available
+local git_info = {}
+local git_check = process.exec("git --version")
+if git_check.success then
+    local branch = process.exec("git branch --show-current 2>/dev/null")
+    local commit = process.exec("git rev-parse --short HEAD 2>/dev/null")
+    
+    if branch.success and #branch.stdout > 0 then
+        git_info.branch = branch.stdout:trim()
+    end
+    
+    if commit.success and #commit.stdout > 0 then
+        git_info.commit = commit.stdout:trim()
+    end
+end
+
+if git_info.branch then
+    print("  Git Branch:", git_info.branch)
+end
+if git_info.commit then
+    print("  Git Commit:", git_info.commit)
+end
+
+-- ==================== BUILD PROCESS ====================
+
+print("\n[3/6] Executing build process...")
+
+-- Create build directory
+print("  Creating build directory...")
+local mkdir_result = process.exec("mkdir -p " .. config.artifact_dir .. " 2>/dev/null || mkdir " .. config.artifact_dir)
+
+-- Simulate build steps
+local build_steps = {
+    {name = "Compile", cmd = "echo 'Compiling source files...'"},
+    {name = "Test", cmd = "echo 'Running tests...'"},
+    {name = "Package", cmd = "echo 'Creating package...'"},
+}
+
+local build_results = {}
+
+for i, step in ipairs(build_steps) do
+    print("  [" .. i .. "/" .. #build_steps .. "] " .. step.name .. "...")
+    local result = process.exec(step.cmd)
+    
+    build_results[step.name] = {
+        success = result.success,
+        output = result.stdout:trim(),
+        exitcode = result.exitcode
+    }
+    
+    if result.success then
+        print("      ✓ " .. result.stdout:trim())
+    else
+        print("      ✗ Failed with code " .. result.exitcode)
+    end
+end
+
+-- ==================== ARTIFACT CREATION ====================
+
+print("\n[4/6] Creating build artifacts...")
+
+-- Create a build manifest
+local manifest = {
+    version = config.version,
+    environment = config.environment,
+    timestamp = config.timestamp,
+    git = git_info,
+    build_results = build_results,
+    platform = luah.platform,
+    luah_version = luah.version
+}
+
+-- Convert manifest to JSON string (simplified)
+local manifest_json = json.encode(manifest)
+
+-- Write manifest to file
+local manifest_path = config.artifact_dir .. "/manifest.json"
+fs.write(manifest_path, manifest_json)
+print("  ✓ Manifest created:", manifest_path)
+
+-- Create a sample artifact file
+local artifact_content = "Build Artifact v" .. config.version .. "\n"
+artifact_content = artifact_content .. "Built on: " .. config.timestamp .. "\n"
+artifact_content = artifact_content .. "Environment: " .. config.environment .. "\n"
+
+local artifact_path = config.artifact_dir .. "/app.txt"
+fs.write(artifact_path, artifact_content)
+print("  ✓ Artifact created:", artifact_path)
+
+-- ==================== SIGNING & INTEGRITY ====================
+
+print("\n[5/6] Signing artifacts for integrity...")
+
+-- Hash the manifest
+local manifest_hash = crypto.sha256(manifest_json)
+print("  Manifest SHA-256:", manifest_hash)
+
+-- Hash the artifact
+local artifact_hash = crypto.hashFile(artifact_path, "sha256")
+print("  Artifact SHA-256:", artifact_hash)
+
+-- Create digital signature for manifest
+local signature = crypto.hmac(manifest_json, config.signing_key)
+print("  Manifest HMAC signature:", signature:sub(1, 32) .. "...")
+
+-- Create a checksum file
+local checksums = {
+    ["manifest.json"] = manifest_hash,
+    ["app.txt"] = artifact_hash
+}
+
+local checksum_content = "SHA256 Checksums\n"
+checksum_content = checksum_content .. "Generated: " .. time.stamp() .. "\n\n"
+for file, hash in pairs(checksums) do
+    checksum_content = checksum_content .. hash .. "  " .. file .. "\n"
+end
+
+local checksum_path = config.artifact_dir .. "/checksums.txt"
+fs.write(checksum_path, checksum_content)
+print("  ✓ Checksums file created")
+
+-- Sign the checksums
+local checksum_signature = crypto.hmac(checksum_content, config.signing_key)
+local signature_path = config.artifact_dir .. "/checksums.sig"
+fs.write(signature_path, checksum_signature)
+print("  ✓ Signature file created")
+
+-- ==================== VERIFICATION ====================
+
+print("\n[6/6] Verifying build integrity...")
+
+-- Read back the checksum file
+local read_checksums = fs.read(checksum_path)
+local read_signature = fs.read(signature_path)
+
+-- Verify signature
+local signature_valid = crypto.hmacVerify(read_checksums, config.signing_key, read_signature)
+print("  Checksum signature valid?", signature_valid)
+
+-- Verify file hashes
+print("  Verifying file integrity...")
+for file, expected_hash in pairs(checksums) do
+    local file_path = config.artifact_dir .. "/" .. file
+    if fs.exists(file_path) then
+        local actual_hash = crypto.hashFile(file_path, "sha256")
+        local matches = actual_hash == expected_hash
+        if matches then
+            print("    ✓ " .. file .. " - OK")
+        else
+            print("    ✗ " .. file .. " - MISMATCH!")
+        end
+    else
+        print("    ✗ " .. file .. " - NOT FOUND")
+    end
+end
+
+-- ==================== BUILD SUMMARY ====================
+
+print("\n=== Build Summary ===")
+print("Version:      ", config.version)
+print("Environment:  ", config.environment)
+print("Build Time:   ", config.timestamp)
+print("Platform:     ", luah.platform)
+print("Artifact Dir: ", config.artifact_dir)
+
+-- List all artifacts
+print("\nCreated Artifacts:")
+local files = {"manifest.json", "app.txt", "checksums.txt", "checksums.sig"}
+for _, file in ipairs(files) do
+    local path = config.artifact_dir .. "/" .. file
+    if fs.exists(path) then
+        local size = #fs.read(path)
+        print("  • " .. file .. " (" .. size .. " bytes)")
+    end
+end
+
+-- Generate build ID
+local build_id = crypto.sha256(config.version .. config.timestamp):sub(1, 12)
+print("\nBuild ID:", build_id)
+
+-- Create a release tag (simulated)
+local release_tag = "v" .. config.version .. "-" .. build_id
+print("Release Tag:", release_tag)
+
+print("\n✓ Build process complete!")
+print("✓ All artifacts signed and verified")
+print("✓ Ready for deployment")
+
+-- ==================== CLEANUP OPTION ====================
+
+print("\n--- Cleanup ---")
+print("To clean up, run: rm -rf " .. config.artifact_dir)

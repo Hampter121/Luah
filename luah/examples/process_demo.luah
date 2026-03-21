@@ -1,0 +1,142 @@
+-- Luah Example: Process Management
+-- Demonstrates process library for executing external commands
+
+print("=== Process Management Demo ===\n")
+
+-- Get current process info
+print("Current Process Info:")
+print("  PID:", process.getPid())
+print("  Parent PID:", process.getParentPid())
+print("  Working Directory:", process.getCwd())
+
+-- Execute a simple command
+print("\n=== Executing Commands ===")
+print("Running 'echo Hello from Luah'...")
+local result = process.exec("echo Hello from Luah")
+print("  Output:", result.stdout:trim())
+print("  Exit Code:", result.exitcode)
+print("  Success:", result.success)
+
+-- Execute with arguments (array style)
+print("\nListing files in current directory...")
+local ls_result = process.exec("ls", {"-la"}, true)
+print("  First 200 chars of output:")
+print(ls_result.stdout:sub(1, 200))
+
+-- Get system information
+print("\n=== System Information ===")
+
+-- Get Python version
+local py_result = process.exec("python --version")
+if py_result.success then
+    print("Python:", py_result.stdout:trim())
+else
+    print("Python:", py_result.stderr:trim())
+end
+
+-- Get date/time
+local date_result = process.exec("date")
+if date_result.success then
+    print("Date:", date_result.stdout:trim())
+end
+
+-- Pipe commands together (Unix-style)
+print("\n=== Piping Commands ===")
+print("Example: echo 'hello\\nworld\\nhello' | grep hello")
+
+-- Note: Windows uses different commands, so this is platform-specific
+local pipe_result = process.pipe({
+    "echo 'hello\nworld\nhello'",
+    "grep hello"
+})
+
+if pipe_result.success then
+    print("Piped output:")
+    print(pipe_result.stdout)
+else
+    print("(Pipe demo requires Unix-like system)")
+end
+
+-- Spawn a process without waiting
+print("\n=== Spawning Background Processes ===")
+print("Spawning a background sleep process...")
+
+local proc = process.spawn("sleep 2")
+print("  Spawned PID:", proc.pid)
+print("  Is running?", proc.isRunning())
+
+print("  Waiting 1 second...")
+wait(1)
+print("  Still running?", proc.isRunning())
+
+print("  Terminating process...")
+proc.terminate()
+wait(0.5)
+print("  Is running?", proc.isRunning())
+
+-- Change directory
+print("\n=== Directory Operations ===")
+local original_cwd = process.getCwd()
+print("Original directory:", original_cwd)
+
+-- Try to change to /tmp or C:\Temp
+local temp_dir = "/tmp"
+if luah.platform == "windows" then
+    temp_dir = "C:\\Temp"
+end
+
+if process.chdir(temp_dir) then
+    print("Changed to:", process.getCwd())
+    process.chdir(original_cwd)
+    print("Changed back to:", process.getCwd())
+else
+    print("Could not change to", temp_dir)
+end
+
+-- Practical example: Git integration
+print("\n=== Practical Example: Git Info ===")
+
+local git_check = process.exec("git --version")
+if git_check.success then
+    print("Git version:", git_check.stdout:trim())
+    
+    -- Try to get current branch
+    local branch = process.exec("git branch --show-current")
+    if branch.success and #branch.stdout > 0 then
+        print("Current branch:", branch.stdout:trim())
+    end
+    
+    -- Get last commit
+    local commit = process.exec("git log -1 --oneline")
+    if commit.success and #commit.stdout > 0 then
+        print("Last commit:", commit.stdout:trim())
+    end
+else
+    print("Git not available or not in a git repository")
+end
+
+-- Example: Creating a build script
+print("\n=== Build Script Example ===")
+
+local function build_project()
+    print("Starting build process...")
+    
+    -- Step 1: Clean
+    print("  [1/3] Cleaning...")
+    local clean = process.exec("rm -rf build 2>/dev/null || true")
+    
+    -- Step 2: Create build directory
+    print("  [2/3] Creating build directory...")
+    local mkdir = process.exec("mkdir -p build")
+    
+    -- Step 3: Copy files
+    print("  [3/3] Copying files...")
+    -- This is just a demo, adjust for your actual build process
+    
+    print("✓ Build complete!")
+    return true
+end
+
+build_project()
+
+print("\n✓ Process management demo complete!")

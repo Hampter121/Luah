@@ -56,6 +56,12 @@ from runtime.libs.sound       import yuriinject_sound
 
 from runtime.libs.http_server import yuriinject_http
 
+from runtime.libs.env         import yuriinject_env
+
+from runtime.libs.process     import yuriinject_process
+
+from runtime.libs.crypto      import yuriinject_crypto
+
                                              
 
 LUAH_VERSION = "1.2"
@@ -528,6 +534,12 @@ class LuaForgeRuntime:
         yuriinject_sound(yurilua, yurig)
 
         yuriinject_http(yurilua, yurig, yuristop)
+
+        yuriinject_env(yurilua, yurig)
+
+        yuriinject_process(yurilua, yurig)
+
+        yuriinject_crypto(yurilua, yurig)
 
     def _emit_error(self, yurimsg):
 

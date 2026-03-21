@@ -1,0 +1,190 @@
+-- Luah Example: Cryptography & Hashing
+-- Demonstrates crypto library for hashing, encoding, and encryption
+
+print("=== Cryptography & Hashing Demo ===\n")
+
+local test_data = "Hello, Luah!"
+
+-- Hash functions
+print("=== Hash Functions ===")
+print("Input:", test_data)
+print("MD5:        ", crypto.md5(test_data))
+print("SHA-1:      ", crypto.sha1(test_data))
+print("SHA-256:    ", crypto.sha256(test_data))
+print("SHA-512:    ", crypto.sha512(test_data):sub(1, 64) .. "...")
+print("SHA3-256:   ", crypto.sha3_256(test_data))
+print("BLAKE2b:    ", crypto.blake2b(test_data, 32))
+
+-- Hash comparison
+print("\n=== Hash Comparison ===")
+local password = "mySecretPassword123"
+local hash1 = crypto.sha256(password)
+local hash2 = crypto.sha256("differentPassword")
+local hash3 = crypto.sha256(password)
+
+print("Hash of 'mySecretPassword123':")
+print("  ", hash1)
+print("Hash of 'differentPassword':")
+print("  ", hash2)
+print("Hash of 'mySecretPassword123' again:")
+print("  ", hash3)
+print("First and third match?", hash1 == hash3)
+
+-- HMAC (Message Authentication)
+print("\n=== HMAC (Message Authentication) ===")
+local message = "Transfer $1000 to account 12345"
+local secret_key = "my_secret_key"
+local signature = crypto.hmac(message, secret_key)
+
+print("Message:", message)
+print("HMAC Signature:", signature)
+
+-- Verify the signature
+local is_valid = crypto.hmacVerify(message, secret_key, signature)
+print("Signature valid?", is_valid)
+
+-- Try with tampered message
+local tampered = "Transfer $9999 to account 12345"
+local tampered_valid = crypto.hmacVerify(tampered, secret_key, signature)
+print("Tampered message valid?", tampered_valid)
+
+-- Base64 Encoding
+print("\n=== Base64 Encoding ===")
+local original = "Hello, World! 🌍"
+local encoded = crypto.base64Encode(original)
+local decoded = crypto.base64Decode(encoded)
+
+print("Original:", original)
+print("Encoded:", encoded)
+print("Decoded:", decoded)
+print("Match?", original == decoded)
+
+-- URL-safe Base64
+local url_data = "user@example.com:password123"
+local url_encoded = crypto.base64UrlEncode(url_data)
+print("\nURL-safe encoding:", url_encoded)
+
+-- Hexadecimal encoding
+print("\n=== Hex Encoding ===")
+local text = "Binary data: \x01\x02\x03"
+local hex = crypto.hexEncode(text)
+print("Hex:", hex)
+print("Decoded:", crypto.hexDecode(hex))
+
+-- Random Generation
+print("\n=== Random Generation ===")
+print("Random bytes (16):", crypto.randomBytes(16))
+print("Random token:", crypto.randomToken(16))
+print("Random hex (32):", crypto.randomHex(32))
+print("Random int (1-100):", crypto.randomInt(1, 100))
+print("Random int (1-100):", crypto.randomInt(1, 100))
+print("Random int (1-100):", crypto.randomInt(1, 100))
+
+local choices = {"apple", "banana", "cherry", "date"}
+print("Random choice:", crypto.randomChoice(choices))
+print("Random choice:", crypto.randomChoice(choices))
+
+-- Password hashing with PBKDF2
+print("\n=== Password Hashing (PBKDF2) ===")
+local user_password = "myPassword123"
+local salt = crypto.generateSalt(16)
+
+print("Password:", user_password)
+print("Salt:", salt)
+
+-- Hash the password
+local password_hash = crypto.pbkdf2(user_password, salt, 100000, 32)
+print("Hashed password:", password_hash)
+
+-- Verify password by hashing again with same salt
+local verify_hash = crypto.pbkdf2(user_password, salt, 100000, 32)
+print("Verification hash:", verify_hash)
+print("Hashes match?", password_hash == verify_hash)
+
+-- Wrong password
+local wrong_hash = crypto.pbkdf2("wrongPassword", salt, 100000, 32)
+print("Wrong password hash matches?", password_hash == wrong_hash)
+
+-- Simple XOR Encryption (for obfuscation only!)
+print("\n=== XOR Encryption (Simple Obfuscation) ===")
+print("⚠️  XOR is NOT secure for production use!")
+
+local plaintext = "This is a secret message"
+local key = "myEncryptionKey"
+
+local encrypted = crypto.xorEncrypt(plaintext, key)
+local decrypted = crypto.xorDecrypt(encrypted, key)
+
+print("Plaintext:", plaintext)
+print("Encrypted:", encrypted)
+print("Decrypted:", decrypted)
+print("Match?", plaintext == decrypted)
+
+-- File hashing example
+print("\n=== File Hashing ===")
+
+-- Create a temporary file
+fs.write("temp_hash_test.txt", "This is test content for hashing")
+
+-- Hash the file
+local file_hash = crypto.hashFile("temp_hash_test.txt", "sha256")
+print("SHA-256 of temp file:", file_hash)
+
+-- Verify by hashing content directly
+local content = fs.read("temp_hash_test.txt")
+local content_hash = crypto.sha256(content)
+print("SHA-256 of content:  ", content_hash)
+print("Hashes match?", file_hash == content_hash)
+
+-- Clean up
+fs.delete("temp_hash_test.txt")
+
+-- Practical example: API key generation
+print("\n=== Practical Example: API Key Generator ===")
+
+local function generate_api_key()
+    local prefix = "luah"
+    local key_part = crypto.randomToken(32)
+    return prefix .. "_" .. key_part
+end
+
+print("Generated API Keys:")
+for i = 1, 3 do
+    print("  " .. i .. ". " .. generate_api_key())
+end
+
+-- Practical example: Data integrity check
+print("\n=== Practical Example: Data Integrity ===")
+
+local function create_signed_data(data, secret)
+    local signature = crypto.hmac(data, secret)
+    return {
+        data = data,
+        signature = signature,
+        timestamp = time.stamp()
+    }
+end
+
+local function verify_signed_data(signed_data, secret)
+    local valid = crypto.hmacVerify(signed_data.data, secret, signed_data.signature)
+    return valid
+end
+
+local secret = "shared_secret_key_123"
+local data = '{"user":"john","balance":1000}'
+
+local signed = create_signed_data(data, secret)
+print("Signed data created:")
+print("  Data:", signed.data)
+print("  Signature:", signed.signature)
+print("  Timestamp:", signed.timestamp)
+
+local is_valid = verify_signed_data(signed, secret)
+print("Signature valid?", is_valid)
+
+-- Try tampering with data
+signed.data = '{"user":"john","balance":9999}'
+local tampered_valid = verify_signed_data(signed, secret)
+print("Tampered data valid?", tampered_valid)
+
+print("\n✓ Cryptography demo complete!")

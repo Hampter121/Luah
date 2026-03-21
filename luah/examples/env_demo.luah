@@ -1,0 +1,90 @@
+-- Luah Example: Environment Variables
+-- Demonstrates env library for managing environment variables
+
+print("=== Environment Variables Demo ===\n")
+
+-- Set some environment variables
+print("Setting environment variables...")
+env.set("API_KEY", "secret_key_12345")
+env.set("DATABASE_URL", "postgres://localhost:5432/mydb")
+env.set("DEBUG_MODE", "true")
+
+-- Get environment variables
+print("\nReading environment variables:")
+print("API_KEY:", env.get("API_KEY"))
+print("DATABASE_URL:", env.get("DATABASE_URL"))
+print("DEBUG_MODE:", env.get("DEBUG_MODE"))
+
+-- Get with default value
+print("\nGetting with default:")
+print("MISSING_VAR:", env.get("MISSING_VAR", "default_value"))
+
+-- Check if variable exists
+print("\nChecking existence:")
+print("API_KEY exists?", env.has("API_KEY"))
+print("NONEXISTENT exists?", env.has("NONEXISTENT"))
+
+-- Get common system variables
+print("\nCommon system variables:")
+print("PATH:", env.get("PATH"))
+print("HOME:", env.get("HOME"))
+print("USER:", env.get("USER") or env.get("USERNAME"))
+
+-- List all environment variable names
+print("\nAll environment variable names:")
+local keys = env.keys()
+local count = 0
+for i, key in ipairs(keys) do
+    count = count + 1
+    if count <= 10 then
+        print("  " .. key)
+    end
+end
+print("  ... (showing first 10 of " .. #keys .. " total)")
+
+-- Update multiple variables at once
+print("\nUpdating multiple variables:")
+env.update({
+    APP_NAME = "Luah Demo",
+    VERSION = "1.0",
+    ENV = "development"
+})
+
+print("APP_NAME:", env.get("APP_NAME"))
+print("VERSION:", env.get("VERSION"))
+print("ENV:", env.get("ENV"))
+
+-- Delete a variable
+print("\nDeleting API_KEY...")
+env.delete("API_KEY")
+print("API_KEY exists?", env.has("API_KEY"))
+
+-- Practical example: Configuration from environment
+print("\n=== Practical Configuration Example ===")
+
+-- Set up a config system
+env.set("DB_HOST", "localhost")
+env.set("DB_PORT", "5432")
+env.set("DB_NAME", "myapp")
+env.set("CACHE_TTL", "3600")
+
+local config = {
+    database = {
+        host = env.get("DB_HOST", "localhost"),
+        port = tonumber(env.get("DB_PORT", "5432")),
+        name = env.get("DB_NAME", "default_db")
+    },
+    cache = {
+        ttl = tonumber(env.get("CACHE_TTL", "1800"))
+    },
+    debug = env.get("DEBUG", "false") == "true"
+}
+
+print("\nLoaded configuration:")
+print("Database Host:", config.database.host)
+print("Database Port:", config.database.port)
+print("Database Name:", config.database.name)
+print("Cache TTL:", config.cache.ttl, "seconds")
+print("Debug Mode:", config.debug)
+
+print("\n✓ Environment variables demo complete!")
